@@ -11,7 +11,6 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Separator } from "@/components/ui/separator"
 import { api, qrURL, type Preview, type PreviewEnv, type Repo } from "@/lib/api"
 import { shortSha } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -64,23 +63,22 @@ function EnvironmentPanel({
   const look = ENV_LOOK[status] ?? ENV_LOOK.none
 
   return (
-    <div className="rounded-xl border bg-muted/30 p-3">
+    <div className="rounded-lg border bg-muted/30 px-3 py-2.5">
+      {/* the dialog title already names the feature; lead with state instead */}
       <div className="flex items-center gap-2">
-        <Server className="size-4 text-muted-foreground" />
-        <span className="text-sm font-semibold">Preview Environment</span>
-        <span className={cn("ml-auto inline-flex items-center gap-1.5 text-xs font-medium", look.text)}>
+        <Server className="size-3.5 text-muted-foreground" />
+        <span className={cn("inline-flex items-center gap-1.5 text-sm font-medium", look.text)}>
           <span className={cn("size-1.5 rounded-full", look.dot)} />
           {look.label}
         </span>
+        <span className="min-w-0 truncate text-xs text-muted-foreground">
+          {status === "running" && "· on its own domain, isolated from GitGit"}
+          {(status === "building" || status === "queued") && "· the link works as soon as it's up"}
+          {status === "failed" && `· ${env?.message || "the build or the app exited"}`}
+          {status === "stopped" && `· ${env?.message || "not currently running"}`}
+          {status === "none" && "· starts on first visit"}
+        </span>
       </div>
-
-      <p className="mt-1 text-xs text-muted-foreground">
-        {status === "running" && "Your app is running on its own domain, isolated from GitGit."}
-        {(status === "building" || status === "queued") && "Building this branch — the link works as soon as it's up."}
-        {status === "failed" && (env?.message || "The build or the app exited.")}
-        {status === "stopped" && (env?.message || "Not currently running.")}
-        {status === "none" && "Starts automatically the first time the link is opened."}
-      </p>
 
       <div className="mt-2 flex items-center gap-2">
         {repo.can_write && (
@@ -88,6 +86,7 @@ function EnvironmentPanel({
             <Button
               variant="outline"
               size="sm"
+              className="h-7 px-2.5 text-xs"
               disabled={busy}
               onClick={async () => {
                 setBusy(true)
@@ -110,6 +109,7 @@ function EnvironmentPanel({
               <Button
                 variant="ghost"
                 size="sm"
+                className="h-7 px-2.5 text-xs"
                 disabled={busy}
                 onClick={async () => {
                   setBusy(true)
@@ -126,7 +126,7 @@ function EnvironmentPanel({
             )}
           </>
         )}
-        <Button variant="ghost" size="sm" className="ml-auto" onClick={() => setShowLog(!showLog)}>
+        <Button variant="ghost" size="sm" className="ml-auto h-7 px-2.5 text-xs" onClick={() => setShowLog(!showLog)}>
           <ScrollText className="size-3.5" /> {showLog ? "Hide" : "Logs"}
         </Button>
       </div>
@@ -180,10 +180,13 @@ export function PreviewDialog({
     }
   }, [open, create])
 
-  // A Preview Environment owns its whole subdomain, so its URL is the origin
-  // itself; static previews live under a path on the main host.
+  // A preview with its own subdomain is reachable from anywhere, so the LAN
+  // address picker only applies to the path-served fallback.
+  const needsHostPick = !preview?.url
   const url = preview?.url ? preview.url : preview && host ? host + preview.path : ""
   const browserURL = preview?.url ? preview.url : preview ? preview.path : ""
+  // shown without the scheme: the interesting part is the host
+  const displayURL = (url || browserURL).replace(/^https?:\/\//, "")
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -198,16 +201,10 @@ export function PreviewDialog({
           <DialogTitle className="flex items-center gap-2">
             <Eye className="size-5 text-primary" /> {preview?.runnable ? "Preview Environment" : "Branch preview"}
           </DialogTitle>
-          <DialogDescription>
-            {preview?.runnable ? "A running instance of " : "A live, sandboxed preview of "}
-            <code className="rounded bg-muted px-1.5 font-mono text-xs">{refName}</code>
-            {preview?.sha && (
-              <>
-                {" "}
-                at <span className="font-mono">{shortSha(preview.sha)}</span>
-              </>
-            )}{" "}
-            — it follows the branch, so new pushes appear on the same link.
+          <DialogDescription className="text-xs">
+            <code className="rounded bg-muted px-1.5 py-0.5 font-mono">{refName}</code>
+            {preview?.sha && <span className="font-mono"> · {shortSha(preview.sha)}</span>} — follows the branch, so new
+            pushes appear on the same link.
           </DialogDescription>
         </DialogHeader>
 
@@ -224,16 +221,19 @@ export function PreviewDialog({
         )}
 
         {preview && (
-          <div className="space-y-4">
+          <div className="space-y-3">
             {preview.runnable && <EnvironmentPanel repo={repo} preview={preview} onChange={create} />}
-            <div className="flex items-center gap-2">
-              <code className="min-w-0 flex-1 truncate rounded-lg border bg-muted px-3 py-2 font-mono text-xs">
-                {url || browserURL}
+
+            {/* the link, with its actions inline */}
+            <div className="flex items-center gap-1.5">
+              <code className="min-w-0 flex-1 truncate rounded-md border bg-muted/50 px-2.5 py-1.5 font-mono text-xs">
+                {displayURL}
               </code>
               <Button
-                variant="outline"
+                variant="ghost"
                 size="icon"
                 className="size-8 shrink-0"
+                title="Copy link"
                 onClick={async () => {
                   await navigator.clipboard.writeText(url || location.origin + browserURL)
                   setCopied(true)
@@ -242,54 +242,59 @@ export function PreviewDialog({
               >
                 {copied ? <Check className="size-4 text-primary" /> : <Copy className="size-4" />}
               </Button>
-              <Button asChild variant="outline" size="icon" className="size-8 shrink-0">
+              <Button asChild variant="ghost" size="icon" className="size-8 shrink-0" title="Open in a new tab">
                 <a href={browserURL} target="_blank" rel="noreferrer">
                   <ExternalLink className="size-4" />
                 </a>
               </Button>
             </div>
 
-            <Separator />
-
-            <div>
-              <h4 className="mb-1 flex items-center gap-2 text-sm font-semibold">
-                <Smartphone className="size-4 text-tangerine" /> Mobile test
-              </h4>
-              <p className="mb-3 text-xs text-muted-foreground">
-                Scan with your phone — same Wi-Fi network as this machine.
-              </p>
-              {preview.hosts.length > 1 && (
-                <Select value={host} onValueChange={setHost}>
-                  <SelectTrigger className="mb-3 w-full font-mono text-xs">
-                    <SelectValue placeholder="Choose a reachable address" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {preview.hosts.map((h) => (
-                      <SelectItem key={h} value={h} className="font-mono text-xs">
-                        {h}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-              {url ? (
-                <div className="flex justify-center rounded-xl border bg-white p-4">
-                  <img src={qrURL(url)} alt={`QR code for ${url}`} className="size-44" />
+            {/* QR beside its caption, rather than stacked under a heading */}
+            {url ? (
+              <div className="flex items-center gap-4 rounded-lg border p-3">
+                <div className="shrink-0 rounded-md bg-white p-1.5">
+                  <img src={qrURL(url)} alt={`QR code for ${url}`} className="size-24" />
                 </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">No reachable address detected.</p>
-              )}
-            </div>
+                <div className="min-w-0 space-y-1.5">
+                  <p className="flex items-center gap-1.5 text-sm font-medium">
+                    <Smartphone className="size-3.5 text-tangerine" />
+                    Open on your phone
+                  </p>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    {needsHostPick
+                      ? "Scan it while on the same Wi-Fi as this machine."
+                      : "Scan it from anywhere — no shared network needed."}
+                  </p>
+                  {/* only meaningful for LAN previews; a subdomain URL is already reachable */}
+                  {needsHostPick && preview.hosts.length > 1 && (
+                    <Select value={host} onValueChange={setHost}>
+                      <SelectTrigger size="sm" className="w-full font-mono text-[11px]">
+                        <SelectValue placeholder="Address" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {preview.hosts.map((h) => (
+                          <SelectItem key={h} value={h} className="font-mono text-xs">
+                            {h}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">No reachable address detected for a QR code.</p>
+            )}
 
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>
-                Anyone with the link can view this{repo.private && " (even on this private repo)"} · expires in{" "}
+            <div className="flex items-center justify-between gap-3 border-t pt-2.5 text-xs text-muted-foreground">
+              <span className="min-w-0">
+                Anyone with the link can view it · expires in{" "}
                 {Math.max(1, Math.round((preview.expires_at - Date.now() / 1000) / 3600))}h
               </span>
               <Button
                 variant="ghost"
                 size="sm"
-                className="text-destructive hover:text-destructive"
+                className="h-7 shrink-0 px-2 text-destructive hover:text-destructive"
                 onClick={async () => {
                   try {
                     await api.deletePreview(repo.owner, repo.name, preview.id)

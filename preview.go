@@ -364,33 +364,32 @@ func previewHosts(r *http.Request) []string {
 		port = pt
 	}
 	hosts := []string{}
-	if baseURL != "" {
-		hosts = append(hosts, strings.TrimSuffix(baseURL, "/"))
+	seen := map[string]bool{}
+	add := func(h string) {
+		h = strings.TrimSuffix(h, "/")
+		if h == "" || seen[h] {
+			return
+		}
+		seen[h] = true
+		hosts = append(hosts, h)
 	}
-	hosts = append(hosts, scheme+"://"+r.Host)
+
+	// The configured external URL and the request host are frequently the
+	// same thing; dedupe so the picker never offers a value twice.
+	add(baseURL)
+	add(scheme + "://" + r.Host)
+
 	addrs, _ := net.InterfaceAddrs()
 	for _, a := range addrs {
 		ipnet, ok := a.(*net.IPNet)
-		if !ok || ipnet.IP.To4() == nil || ipnet.IP.IsLoopback() {
-			continue
-		}
-		if !ipnet.IP.IsPrivate() {
+		if !ok || ipnet.IP.To4() == nil || ipnet.IP.IsLoopback() || !ipnet.IP.IsPrivate() {
 			continue
 		}
 		h := ipnet.IP.String()
 		if port != "" {
 			h = net.JoinHostPort(h, port)
 		}
-		cand := scheme + "://" + h
-		dup := false
-		for _, e := range hosts {
-			if e == cand {
-				dup = true
-			}
-		}
-		if !dup {
-			hosts = append(hosts, cand)
-		}
+		add(scheme + "://" + h)
 	}
 	return hosts
 }
