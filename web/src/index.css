@@ -1,0 +1,139 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-tangerine: var(--tangerine);
+  --color-slate-ink: var(--slate-ink);
+  --color-diff-add: var(--diff-add);
+  --color-diff-add-strong: var(--diff-add-strong);
+  --color-diff-del: var(--diff-del);
+  --color-diff-del-strong: var(--diff-del-strong);
+  --color-diff-hunk: var(--diff-hunk);
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Inter, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(0.99 0.002 145);
+  --foreground: oklch(0.24 0.02 255);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.24 0.02 255);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.24 0.02 255);
+  /* emerald — the GitGit primary */
+  --primary: oklch(0.62 0.12 160);
+  --primary-foreground: oklch(0.99 0.005 160);
+  --secondary: oklch(0.965 0.005 150);
+  --secondary-foreground: oklch(0.3 0.02 255);
+  --muted: oklch(0.96 0.005 150);
+  --muted-foreground: oklch(0.52 0.015 255);
+  --accent: oklch(0.955 0.01 150);
+  --accent-foreground: oklch(0.3 0.02 255);
+  --destructive: oklch(0.55 0.2 25);
+  --border: oklch(0.905 0.008 150);
+  --input: oklch(0.905 0.008 150);
+  --ring: oklch(0.62 0.12 160);
+  /* brand extras */
+  --brand: oklch(0.62 0.12 160);
+  --brand-foreground: oklch(0.99 0.005 160);
+  --tangerine: oklch(0.72 0.15 60);
+  --slate-ink: oklch(0.28 0.02 255);
+  /* diff colors */
+  --diff-add: oklch(0.96 0.04 155);
+  --diff-add-strong: oklch(0.52 0.11 155);
+  --diff-del: oklch(0.96 0.025 25);
+  --diff-del-strong: oklch(0.53 0.16 25);
+  --diff-hunk: oklch(0.955 0.02 160);
+}
+
+.dark {
+  --background: oklch(0.17 0.012 255);
+  --foreground: oklch(0.93 0.005 150);
+  --card: oklch(0.21 0.014 255);
+  --card-foreground: oklch(0.93 0.005 150);
+  --popover: oklch(0.21 0.014 255);
+  --popover-foreground: oklch(0.93 0.005 150);
+  --primary: oklch(0.68 0.12 160);
+  --primary-foreground: oklch(0.16 0.02 160);
+  --secondary: oklch(0.26 0.014 255);
+  --secondary-foreground: oklch(0.93 0.005 150);
+  --muted: oklch(0.26 0.014 255);
+  --muted-foreground: oklch(0.68 0.01 255);
+  --accent: oklch(0.28 0.015 255);
+  --accent-foreground: oklch(0.93 0.005 150);
+  --destructive: oklch(0.62 0.19 25);
+  --border: oklch(0.29 0.012 255);
+  --input: oklch(0.3 0.012 255);
+  --ring: oklch(0.68 0.12 160);
+  --brand: oklch(0.68 0.12 160);
+  --brand-foreground: oklch(0.16 0.02 160);
+  --tangerine: oklch(0.75 0.14 60);
+  --slate-ink: oklch(0.93 0.005 150);
+  --diff-add: oklch(0.26 0.03 155);
+  --diff-add-strong: oklch(0.75 0.11 155);
+  --diff-del: oklch(0.26 0.025 25);
+  --diff-del-strong: oklch(0.72 0.13 25);
+  --diff-hunk: oklch(0.27 0.02 160);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04";
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+/* Rendered markdown (server-sanitized) */
+.markdown {
+  @apply text-[15px] leading-relaxed;
+}
+.markdown h1 { @apply mt-6 mb-3 border-b pb-2 text-2xl font-semibold tracking-tight; }
+.markdown h2 { @apply mt-6 mb-3 border-b pb-2 text-xl font-semibold tracking-tight; }
+.markdown h3 { @apply mt-5 mb-2 text-lg font-semibold; }
+.markdown h4 { @apply mt-4 mb-2 font-semibold; }
+.markdown p { @apply my-3; }
+.markdown a { @apply text-primary underline-offset-4 hover:underline; }
+.markdown ul { @apply my-3 list-disc pl-6; }
+.markdown ol { @apply my-3 list-decimal pl-6; }
+.markdown li { @apply my-1; }
+.markdown li input[type="checkbox"] { @apply mr-1.5 align-middle accent-primary; }
+.markdown pre { @apply my-4 overflow-x-auto rounded-lg border bg-muted p-4 font-mono text-[13px] leading-normal; }
+.markdown code:not(pre code) { @apply rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em]; }
+.markdown blockquote { @apply my-3 border-l-4 pl-4 text-muted-foreground; }
+.markdown table { @apply my-4 w-auto border-collapse text-sm; }
+.markdown th, .markdown td { @apply border px-3 py-1.5; }
+.markdown th { @apply bg-muted font-semibold; }
+.markdown img { @apply max-w-full rounded-lg; }
+.markdown hr { @apply my-6; }

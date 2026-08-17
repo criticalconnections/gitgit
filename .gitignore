@@ -1,0 +1,27 @@
+# build output
+/gitgit
+/gitgit-bin
+web/dist/
+web/node_modules/
+web/*.tsbuildinfo
+
+# runtime state (repos, SQLite DB, CI workspaces)
+/data/
+*.db
+*.db-wal
+*.db-shm
+
+# vendored Gitea reference tree — a separate 49MB Go module kept locally for
+# reference only. GitGit adapts its designs with attribution (see NOTICE),
+# it does not import the module.
+/gitea-main/
+
+# local env / secrets
+.env
+.env.*
+!.env.example
+.dev.vars
+
+# os / editor
+.DS_Store
+*.swp
