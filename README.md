@@ -91,6 +91,22 @@ docker build -t gitgit .
 docker run -p 3000:3000 -v gitgit-data:/data gitgit
 ```
 
+### Publishing it (Cloudflare Tunnel)
+
+GitGit needs subprocesses and a filesystem, so it runs on your own hardware or
+a VM — Cloudflare provides the edge rather than the runtime. A tunnel gives it
+a real hostname and TLS with no open inbound ports:
+
+```bash
+cloudflared tunnel create gitgit
+cloudflared tunnel route dns gitgit git.example.com
+cloudflared tunnel --config deploy/cloudflared.yml run gitgit
+```
+
+See [deploy/README.md](deploy/README.md) for the full walkthrough, including
+hardening before exposure and why Cloudflare Access needs path scoping to
+avoid breaking `git clone`.
+
 ### Flags / environment
 
 | Flag | Env | Default | Purpose |
@@ -98,6 +114,7 @@ docker run -p 3000:3000 -v gitgit-data:/data gitgit
 | `-addr` | `GITGIT_ADDR` | `:3000` | listen address |
 | `-data` | `GITGIT_DATA` | `./data` | repos, SQLite DB, CI workspaces |
 | `-base-url` | `GITGIT_BASE_URL` | derived | external URL for clone instructions |
+| `-open-registration` | `GITGIT_OPEN_REGISTRATION` | `true` | allow anyone to sign up; set `false` when internet-facing (the first account can still bootstrap the admin) |
 | `-ci-workers` | — | `2` | concurrent CI runners |
 
 ## CI configuration

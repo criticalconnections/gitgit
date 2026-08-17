@@ -17,6 +17,7 @@ var (
 	baseURL  string // optional external URL override, e.g. https://git.example.com
 	devMode  bool
 	ciSlots  int
+	openReg  bool
 	startTme = time.Now()
 )
 
@@ -32,6 +33,8 @@ func main() {
 	flag.StringVar(&dataDir, "data", envOr("GITGIT_DATA", "./data"), "data directory (repos, database, CI workspaces)")
 	flag.StringVar(&baseURL, "base-url", envOr("GITGIT_BASE_URL", ""), "external base URL used in clone instructions (default: derived from request)")
 	flag.IntVar(&ciSlots, "ci-workers", 2, "number of concurrent CI job runners")
+	flag.BoolVar(&openReg, "open-registration", envOr("GITGIT_OPEN_REGISTRATION", "true") != "false",
+		"allow anyone to register; set false for internet-facing deployments (the first account can still be created to bootstrap the admin)")
 	flag.BoolVar(&devMode, "dev", false, "dev mode: serve templates/static from disk instead of the embedded copies")
 	flag.Parse()
 

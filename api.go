@@ -141,6 +141,12 @@ func handleAPIAuth(c *apiCtx, rest []string) {
 		if !c.decode(&req) {
 			return
 		}
+		// Closed registration still permits the very first account, so a fresh
+		// internet-facing instance can bootstrap its admin.
+		if !openReg && userCount() > 0 {
+			c.err(403, "registration is closed on this instance")
+			return
+		}
 		u, err := createUser(strings.TrimSpace(req.Username), strings.TrimSpace(req.Email), req.Password)
 		if err != nil {
 			c.err(422, err.Error())

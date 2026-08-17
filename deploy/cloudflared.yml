@@ -1,0 +1,37 @@
+# Cloudflare Tunnel config for GitGit.
+#
+# This file is INTENTIONALLY separate from ~/.cloudflared/config.yml so it can
+# never disturb other tunnels running on this machine. Always pass it
+# explicitly:
+#
+#   cloudflared tunnel --config deploy/cloudflared.yml run gitgit
+#
+# Setup (once):
+#   cloudflared tunnel login                      # if not already authenticated
+#   cloudflared tunnel create gitgit              # writes <UUID>.json credentials
+#   cloudflared tunnel route dns gitgit git.example.com
+#
+# Then fill in the tunnel UUID / hostname below and start GitGit with a
+# matching public base URL so clone instructions and preview QR codes point at
+# the public hostname rather than localhost:
+#
+#   GITGIT_BASE_URL=https://git.example.com ./gitgit -addr 127.0.0.1:3000
+
+tunnel: REPLACE_WITH_TUNNEL_UUID
+credentials-file: /Users/REPLACE_ME/.cloudflared/REPLACE_WITH_TUNNEL_UUID.json
+
+# Cloudflare terminates TLS; the origin only ever listens on loopback.
+originRequest:
+  connectTimeout: 30s
+  # Git pushes and CI log streams are long-lived: don't cut them off.
+  noTLSVerify: false
+  disableChunkedEncoding: false
+
+ingress:
+  - hostname: REPLACE_WITH_HOSTNAME
+    service: http://localhost:3000
+    originRequest:
+      # `git clone` of a large repo and streaming CI logs can exceed the
+      # default idle timeout.
+      noHappyEyeballs: true
+  - service: http_status:404

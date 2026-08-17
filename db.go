@@ -302,6 +302,14 @@ func createUser(username, email, password string) (*User, error) {
 	return getUserByID(id)
 }
 
+// userCount reports how many accounts exist (used to allow bootstrapping the
+// first admin even when registration is closed).
+func userCount() int {
+	var n int
+	db.QueryRow("SELECT COUNT(*) FROM users").Scan(&n)
+	return n
+}
+
 func getUserByID(id int64) (*User, error) {
 	return scanUser(db.QueryRow("SELECT "+userCols+" FROM users WHERE id = ?", id))
 }
