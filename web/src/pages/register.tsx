@@ -42,7 +42,7 @@ export default function Register() {
         to="/"
         className="absolute top-6 left-6 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
       >
-        ← gitgit.dev
+        ← gitgit.io
       </Link>
 
       <div className="w-full max-w-sm">

@@ -107,7 +107,7 @@ function ProductMockup() {
           </div>
           <div className="mx-auto hidden items-center gap-1.5 rounded-md border bg-background px-3 py-1 font-mono text-[11px] text-muted-foreground sm:flex">
             <Lock className="size-3" />
-            gitgit.dev/desmond/demo/pull/8
+            gitgit.io/desmond/demo/pull/8
           </div>
           <span className="hidden w-[46px] sm:block" aria-hidden />
         </div>
