@@ -96,6 +96,8 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		handleAPIUserProfile(c, parts[1])
 	case parts[0] == "repos" && len(parts) == 1:
 		handleAPIRepoIndex(c)
+	case parts[0] == "import":
+		handleAPIImport(c, parts[1:])
 	case parts[0] == "repos" && len(parts) >= 3:
 		repo, err := getRepo(parts[1], parts[2])
 		if err != nil || !canRead(c.u, repo) {

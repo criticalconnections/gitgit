@@ -387,6 +387,16 @@ export interface UserProfile {
   repos: Repo[]
 }
 
+export interface ImportJob {
+  id: number
+  source: string
+  status: "running" | "done" | "failed"
+  message: string
+  log: string
+  created_at: number
+  repo?: string
+}
+
 export type EnvStatus = "queued" | "building" | "running" | "failed" | "stopped" | "none"
 
 export interface PreviewEnv {
@@ -445,6 +455,16 @@ export const api = {
   listRepos: (q?: string) => get<Repo[]>(`/api/v1/repos${q ? `?q=${enc(q)}` : ""}`),
   createRepo: (body: { name: string; description?: string; private?: boolean; auto_init?: boolean }) =>
     post<Repo>("/api/v1/repos", body),
+
+  // import from GitHub (or any git host)
+  startImport: (body: {
+    source: string
+    name?: string
+    private?: boolean
+    token?: string
+    import_issues?: boolean
+  }) => post<ImportJob>("/api/v1/import", body),
+  importStatus: (id: number) => get<ImportJob>(`/api/v1/import/${id}`),
 
   repo: (o: string, r: string) => get<Repo>(`/api/v1/repos/${enc(o)}/${enc(r)}`),
   updateRepo: (o: string, r: string, body: Record<string, unknown>) =>

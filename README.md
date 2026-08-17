@@ -35,6 +35,9 @@ for state, bare repositories on disk. No external services.
   `run:` command a preview stays static — the branch's files served straight
   from the tree, no build required. See
   [Preview Environments](#preview-environments) below.
+- **Import from GitHub** — mirror any repository with every branch and tag,
+  and optionally its issues and labels. Works with private repos via a token,
+  and with GitHub Enterprise or any other git host.
 - **Issues, labels, webhooks, stars, collaborators** with read/write/admin
   roles and private repositories.
 - **JSON API** under `/api/v1` — repos, branches, tags, tree/blob/commits,
@@ -137,6 +140,39 @@ Steps run with `bash -e -o pipefail` in a fresh clone at the pushed commit,
 with `CI`, `GITGIT_SHA`, `GITGIT_REF`, `GITGIT_EVENT`, `GITGIT_REPO`, and
 `GITGIT_RUN_NUMBER` set. CI executes repository code on the host — only host
 repositories you trust, or run the server in a container.
+
+## Importing from GitHub
+
+**Import** in the top bar (or `/import`) brings a repository over. Paste
+`owner/repo` or any URL — GitHub Enterprise and other git hosts work too.
+
+Git data is mirrored with `git clone --mirror`, so **every branch and tag**
+comes across in one pass, and the source's default branch is adopted. The
+`origin` remote is then removed, so an imported repository can never push back
+to where it came from.
+
+Optionally tick **Import issues** to copy issues, their labels, and their
+open/closed state through the GitHub API. Pull requests are imported *as
+issues*: their head branches may not exist here, and a pull request that
+cannot be merged or reviewed is worse than an honest record. Every imported
+item keeps a header crediting the original author and linking back.
+
+Private repositories need a GitHub token with `repo` scope, which is also
+worth supplying for issue imports — unauthenticated API calls are limited to
+60 per hour. The token is used for that one import and never stored.
+
+Imports run in the background with a live log, since a large mirror takes
+minutes.
+
+```bash
+curl -u you:token -X POST https://git.example.com/api/v1/import \
+  -d '{"source":"octocat/Hello-World","import_issues":true}'
+curl -u you:token https://git.example.com/api/v1/import/1   # progress
+```
+
+Known limits: issue import stops at 1000 issues, and because job progress is
+held in memory, restarting the server during an import orphans the job (the
+repository may be left partially mirrored — delete it and re-import).
 
 ## Preview Environments
 

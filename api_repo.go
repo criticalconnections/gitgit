@@ -68,6 +68,59 @@ func handleAPIRepo(c *apiCtx, repo *Repo, rest []string) {
 	}
 }
 
+// ---------- import from GitHub ----------
+
+func handleAPIImport(c *apiCtx, rest []string) {
+	if !c.requireUser() {
+		return
+	}
+	switch {
+	case len(rest) == 0 && c.r.Method == http.MethodPost:
+		var req struct {
+			Source       string `json:"source"`
+			Name         string `json:"name"`
+			Private      bool   `json:"private"`
+			Token        string `json:"token"`
+			ImportIssues bool   `json:"import_issues"`
+		}
+		if !c.decode(&req) {
+			return
+		}
+		job, err := startImport(c.u, ImportRequest{
+			Source: req.Source, TargetName: req.Name, Private: req.Private,
+			Token: req.Token, ImportIssues: req.ImportIssues,
+		})
+		if err != nil {
+			c.err(422, err.Error())
+			return
+		}
+		c.out(202, importJobJSON(job))
+	case len(rest) == 1 && c.r.Method == http.MethodGet:
+		id, _ := strconv.ParseInt(rest[0], 10, 64)
+		job := getImportJob(id)
+		if job == nil || job.UserID != c.u.ID {
+			c.err(404, "import not found")
+			return
+		}
+		c.out(200, importJobJSON(job))
+	default:
+		c.err(404, "unknown endpoint")
+	}
+}
+
+func importJobJSON(j *ImportJob) map[string]any {
+	m := map[string]any{
+		"id": j.ID, "source": j.Source, "status": j.Status,
+		"message": j.Message, "log": j.Log, "created_at": j.CreatedAt,
+	}
+	if j.RepoID != 0 {
+		if r, err := getRepoByID(j.RepoID); err == nil {
+			m["repo"] = r.FullName()
+		}
+	}
+	return m
+}
+
 // ---------- branch previews ----------
 
 func previewJSON(c *apiCtx, repo *Repo, p *Preview) map[string]any {

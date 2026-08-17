@@ -1,5 +1,5 @@
 import { Link, Outlet, useNavigate } from "react-router-dom"
-import { Compass, LogOut, Moon, Plus, Settings, Sun, User as UserIcon } from "lucide-react"
+import { CloudDownload, Compass, LogOut, Moon, Plus, Settings, Sun, User as UserIcon } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import {
@@ -56,6 +56,12 @@ export function AppShell() {
                   <Link to="/new">
                     <Plus className="size-4" />
                     New repository
+                  </Link>
+                </Button>
+                <Button asChild size="sm" variant="ghost" className="text-muted-foreground">
+                  <Link to="/import" title="Import from GitHub">
+                    <CloudDownload className="size-4" />
+                    <span className="sr-only sm:not-sr-only">Import</span>
                   </Link>
                 </Button>
                 <DropdownMenu>

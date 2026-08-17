@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import {
@@ -125,6 +125,13 @@ export default function NewRepo() {
           </form>
         </CardContent>
       </Card>
+
+      <p className="mt-4 text-center text-sm text-muted-foreground">
+        Already have one elsewhere?{" "}
+        <Link to="/import" className="font-medium text-primary hover:underline">
+          Import from GitHub
+        </Link>
+      </p>
     </div>
   )
 }

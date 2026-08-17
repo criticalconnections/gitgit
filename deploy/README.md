@@ -89,8 +89,31 @@ cloudflared tunnel --config deploy/cloudflared.yml run gitgit
 preview QR codes encode. Without it GitGit falls back to the request host,
 which is usually right but can be wrong behind proxies.
 
-Install as services with `cloudflared service install` (Linux/macOS) plus a
-systemd unit or launchd plist for the binary itself.
+### Running as services (macOS)
+
+```bash
+deploy/install-services.sh              # install + start both agents
+deploy/install-services.sh uninstall    # remove them
+```
+
+This installs `io.gitgit.server` and `io.gitgit.tunnel` as launchd **user
+agents** with `KeepAlive`, so both restart on crash and come back at login.
+They use their own labels and their own tunnel config, so a machine already
+running other tunnels — including one installed as `com.cloudflare.cloudflared`
+— is untouched. Logs land in `~/Library/Logs/gitgit/`.
+
+Avoid `cloudflared service install` on such a machine: it manages the global
+`~/.cloudflared/config.yml`, which may belong to a different tunnel.
+
+After rebuilding the binary, restart the service:
+
+```bash
+launchctl kickstart -k gui/$(id -u)/io.gitgit.server
+```
+
+User agents start at login, not at boot. For a headless server, install the
+same commands as LaunchDaemons in `/Library/LaunchDaemons` (needs sudo), or use
+a systemd unit on Linux.
 
 ## 4. Verify
 
