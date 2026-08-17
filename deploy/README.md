@@ -100,6 +100,63 @@ git clone https://git.example.com/you/yourrepo.git             # smart HTTP work
 curl -sSI https://git.example.com/ | grep -i x-frame-options   # DENY
 ```
 
+## Preview Environments (wildcard subdomains)
+
+Preview Environments each get their own hostname, so the tunnel needs a
+wildcard route and the zone needs matching TLS.
+
+**1. Wildcard DNS** — point `*.preview.example.com` at the tunnel:
+
+```bash
+deploy/route-dns.sh '*.preview.example.com'
+```
+
+**2. TLS — the part that surprises people.** Cloudflare's free Universal SSL
+certificate covers exactly two names: `example.com` and `*.example.com`. A
+wildcard one level deeper (`*.preview.example.com`) is **not** covered, and
+requests to it fail the TLS handshake with `no peer certificate available`
+before they ever reach your origin. To use a depth-2 wildcard you need
+**Advanced Certificate Manager** (SSL/TLS → Edge Certificates → Order Advanced
+Certificate, hostnames `example.com`, `*.example.com`,
+`*.preview.example.com`) or **Total TLS**.
+
+Wildcards can only be validated over DNS, never HTTP. On a zone using
+Cloudflare nameservers the `_acme-challenge` TXT records are published
+automatically; issuance usually completes in 10–15 minutes. Verify with:
+
+```bash
+echo | openssl s_client -connect example.com:443 \
+  -servername probe.preview.example.com 2>/dev/null | openssl x509 -noout -subject
+```
+
+**Free alternative:** keep previews at a single level — `-preview-domain
+example.com` serves them as `{id}.example.com`, which the Universal
+certificate already covers. Be aware that every one-label hostname then looks
+like a preview token, so reserve names like `www` accordingly.
+
+**3. Tunnel ingress** — add the wildcard above the main hostname:
+
+```yaml
+ingress:
+  - hostname: "*.preview.example.com"
+    service: http://localhost:3000
+  - hostname: example.com
+    service: http://localhost:3000
+  - service: http_status:404
+```
+
+**4. Run GitGit with the domain configured:**
+
+```bash
+GITGIT_BASE_URL=https://example.com \
+GITGIT_PREVIEW_DOMAIN=preview.example.com \
+  ./gitgit -addr 127.0.0.1:3000 -open-registration=false
+```
+
+Environments execute repository code on the host. Prefer a container or an
+isolated VM, and note the concurrency cap (4 live environments) plus the TTL
+and idle timeouts in `.gitgit/preview.yml`.
+
 ## Cloudflare Access — read this first
 
 Putting Zero Trust Access in front of the whole hostname will **break

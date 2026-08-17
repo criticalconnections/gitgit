@@ -26,14 +26,15 @@ for state, bare repositories on disk. No external services.
   clone with live logs, per-job status, re-runs, and commit badges. Branch
   protection can require green CI and N approvals, enforced identically in
   the UI and the API.
-- **Branch previews** — one click on a PR or the code view spins up a live,
-  sandboxed preview of the branch's tree at a capability URL (`/p/{token}/`)
-  and shows a **QR code** to open it on your phone (auto-detecting your LAN
-  address). The preview follows the branch — push again and the same link
-  serves the new tip. Ideal for eyeballing a static site or built frontend
-  before merging. Previews are opaque-origin sandboxed (previewed scripts run
-  but cannot read GitGit's session or call its API), expire in 24h, and are
-  revocable.
+- **Preview Environments** — one click on a PR spins up a real, running
+  instance of that branch on its own subdomain, with a **QR code** to open it
+  on your phone. Declare how the app builds and runs in `.gitgit/preview.yml`
+  and GitGit clones the branch, builds it, starts the process, and proxies
+  `https://{id}.preview.example.com` to it. Environments follow the branch,
+  rebuild on push, and are torn down on merge, close, idle, or TTL. Without a
+  `run:` command a preview stays static — the branch's files served straight
+  from the tree, no build required. See
+  [Preview Environments](#preview-environments) below.
 - **Issues, labels, webhooks, stars, collaborators** with read/write/admin
   roles and private repositories.
 - **JSON API** under `/api/v1` — repos, branches, tags, tree/blob/commits,
@@ -136,6 +137,64 @@ Steps run with `bash -e -o pipefail` in a fresh clone at the pushed commit,
 with `CI`, `GITGIT_SHA`, `GITGIT_REF`, `GITGIT_EVENT`, `GITGIT_REPO`, and
 `GITGIT_RUN_NUMBER` set. CI executes repository code on the host — only host
 repositories you trust, or run the server in a container.
+
+## Preview Environments
+
+A Preview Environment is an ephemeral, running instance of a branch. Add
+`.gitgit/preview.yml` to the repository:
+
+```yaml
+build:                    # optional, runs once before `run`
+  - npm ci
+  - npm run build
+run: npm start            # long-lived server; omit for a static preview
+static: dist              # directory served when `run` is absent
+health_path: /
+ttl_minutes: 120          # hard lifetime (default 2h)
+idle_minutes: 30          # stopped after this long without a request
+env:
+  NODE_ENV: production
+```
+
+Your process is started with **`$PORT`** set — bind to it, on any interface —
+plus `GITGIT_REPO`, `GITGIT_REF`, `GITGIT_SHA`, and `GITGIT_PREVIEW_URL`.
+GitGit waits for the port to accept connections before routing traffic, and
+serves a holding page (which auto-refreshes) until then.
+
+**Why subdomains.** Each environment is served from its own origin, so
+absolute asset paths (`/assets/app.js`), client-side routers, cookies, and
+`localStorage` behave exactly as they will in production. Serving under a path
+prefix on the forge's own origin breaks all four.
+
+Enable it by pointing GitGit at a wildcard domain:
+
+```bash
+./gitgit -preview-domain preview.example.com
+```
+
+This requires `*.preview.example.com` in DNS **and** TLS coverage for it. Note
+that Cloudflare's free Universal SSL only covers `example.com` and
+`*.example.com` — a *second-level* wildcard needs Advanced Certificate Manager
+or Total TLS. Using a single-level pattern avoids that cost entirely.
+
+Without `-preview-domain`, previews are served at `/p/{token}/` on the main
+host instead, under a strict opaque-origin sandbox. That is fine for static
+content and local development, but cannot host a running app.
+
+### Isolation
+
+Because environments are siblings of the forge's own domain:
+
+- the session cookie uses the **`__Host-`** prefix over HTTPS, which browsers
+  refuse to accept alongside a `Domain` attribute — so a preview cannot set or
+  shadow it
+- the proxy strips `Cookie` before forwarding a request into an environment
+- the API's same-origin guard rejects mutations originating from a preview
+- path-served previews keep the sandbox CSP; subdomain-served ones rely on
+  origin separation instead, so real apps are not crippled
+
+Environments run repository code, exactly like CI. Run GitGit in a container
+or a dedicated VM if you do not fully trust everyone who can push.
 
 ## Stacked PR workflow
 
