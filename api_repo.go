@@ -77,10 +77,33 @@ func previewJSON(c *apiCtx, repo *Repo, p *Preview) map[string]any {
 		"created_at": p.CreatedAt, "expires_at": p.ExpiresAt,
 		"hosts": previewHosts(c.r),
 	}
-	if sha, err := resolveCommit(repo.DiskPath(), "refs/heads/"+p.Ref); err == nil {
-		m["sha"] = sha
+	sha := ""
+	if s, err := resolveCommit(repo.DiskPath(), "refs/heads/"+p.Ref); err == nil {
+		sha = s
+		m["sha"] = s
+	}
+	// Preview Environment: its own origin when a preview domain is configured
+	if host := previewHostFor(p); host != "" {
+		m["host"] = host
+		m["url"] = previewOrigin(p)
+	}
+	if sha != "" {
+		if cfg := loadPreviewConfig(repo.DiskPath(), sha); cfg != nil && strings.TrimSpace(cfg.Run) != "" {
+			m["runnable"] = true
+		}
+	}
+	if e := envByPreview(p.ID); e != nil {
+		m["env"] = envJSON(e)
 	}
 	return m
+}
+
+func envJSON(e *PreviewEnv) map[string]any {
+	return map[string]any{
+		"id": e.ID, "status": e.Status, "commit": e.CommitSHA, "ref": e.Ref,
+		"message": e.Message, "created_at": e.CreatedAt, "started_at": e.StartedAt,
+		"last_used_at": e.LastUsedAt, "expires_at": e.ExpiresAt,
+	}
 }
 
 func apiPreviews(c *apiCtx, repo *Repo, rest []string) {
@@ -116,8 +139,59 @@ func apiPreviews(c *apiCtx, repo *Repo, rest []string) {
 			return
 		}
 		id, _ := strconv.ParseInt(rest[0], 10, 64)
+		if e := envByPreview(id); e != nil {
+			stopPreviewEnv(e.ID, "preview revoked")
+		}
 		deletePreview(repo.ID, id)
 		c.out(200, map[string]bool{"ok": true})
+
+	// ---- Preview Environment control ----
+	case len(rest) == 2 && rest[1] == "env" && c.r.Method == http.MethodGet:
+		id, _ := strconv.ParseInt(rest[0], 10, 64)
+		e := envByPreview(id)
+		if e == nil {
+			c.out(200, map[string]any{"status": "none"})
+			return
+		}
+		m := envJSON(e)
+		m["log"] = envLogTail(e.ID, 20000)
+		c.out(200, m)
+	case len(rest) == 2 && rest[1] == "env" && c.r.Method == http.MethodDelete:
+		if c.u == nil || !canWrite(c.u, repo) {
+			c.err(403, "write access required")
+			return
+		}
+		id, _ := strconv.ParseInt(rest[0], 10, 64)
+		if e := envByPreview(id); e != nil {
+			stopPreviewEnv(e.ID, "stopped by "+c.u.Username)
+		}
+		c.out(200, map[string]bool{"ok": true})
+	case len(rest) == 3 && rest[1] == "env" && rest[2] == "restart" && c.r.Method == http.MethodPost:
+		if c.u == nil || !canWrite(c.u, repo) {
+			c.err(403, "write access required")
+			return
+		}
+		id, _ := strconv.ParseInt(rest[0], 10, 64)
+		p := previewByID(id)
+		if p == nil || p.RepoID != repo.ID {
+			c.err(404, "preview not found")
+			return
+		}
+		if e := envByPreview(id); e != nil {
+			stopPreviewEnv(e.ID, "restarting")
+			db.Exec("DELETE FROM preview_envs WHERE id = ?", e.ID)
+		}
+		sha, err := resolveCommit(repo.DiskPath(), "refs/heads/"+p.Ref)
+		if err != nil {
+			c.err(422, "branch no longer exists")
+			return
+		}
+		e := ensurePreviewEnv(repo, p, sha)
+		if e == nil {
+			c.err(422, "this branch does not define a runnable environment (.gitgit/preview.yml)")
+			return
+		}
+		c.out(201, envJSON(e))
 	default:
 		c.err(404, "unknown endpoint")
 	}

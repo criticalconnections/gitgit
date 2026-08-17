@@ -286,6 +286,7 @@ func apiPullActions(c *apiCtx, repo *Repo, pr *Pull, rest []string) {
 			pr.ClosedAt = nullNow()
 			savePull(pr)
 			addComment("pull", pr.ID, c.u.ID, "closed this pull request", true)
+			stopEnvsForRef(repo.ID, pr.HeadBranch)
 			fireWebhooks(repo, "pull_request", prPayload(repo, pr, "closed"))
 		}
 		c.out(200, pullJSON(repo, pr))
@@ -421,6 +422,7 @@ func apiMergePull(c *apiCtx, repo *Repo, pr *Pull) {
 		}
 	}
 	enqueueCI(repo, newTip, pr.BaseBranch, "push")
+	stopEnvsForRef(repo.ID, pr.HeadBranch) // the branch is merged; its environment is done
 	fireWebhooks(repo, "pull_request", prPayload(repo, pr, "merged"))
 	c.out(200, pullJSON(repo, pr))
 }

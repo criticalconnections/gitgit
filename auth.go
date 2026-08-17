@@ -15,11 +15,35 @@ const (
 
 const sessionCookie = "gitgit_session"
 
+// hostSessionCookie is the hardened name used over HTTPS. The "__Host-"
+// prefix makes browsers refuse the cookie unless it is Secure, Path=/, and
+// carries NO Domain attribute — which also means a Preview Environment on a
+// sibling subdomain cannot set or shadow it. That matters because previews
+// are served from *.<preview-domain>, under the same registrable domain as
+// the forge itself.
+const hostSessionCookie = "__Host-" + sessionCookie
+
+func isSecureRequest(r *http.Request) bool {
+	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+}
+
+// readSessionCookie prefers the hardened cookie and falls back to the plain
+// one (HTTP development, and sessions issued before this was introduced).
+func readSessionCookie(r *http.Request) string {
+	if c, err := r.Cookie(hostSessionCookie); err == nil && c.Value != "" {
+		return c.Value
+	}
+	if c, err := r.Cookie(sessionCookie); err == nil {
+		return c.Value
+	}
+	return ""
+}
+
 // withSession loads the session cookie (if any) into the request context.
 func withSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if c, err := r.Cookie(sessionCookie); err == nil {
-			if s := getSession(c.Value); s != nil {
+		if tok := readSessionCookie(r); tok != "" {
+			if s := getSession(tok); s != nil {
 				if u, err := getUserByID(s.UserID); err == nil {
 					ctx := context.WithValue(r.Context(), ctxUser, u)
 					ctx = context.WithValue(ctx, ctxSession, s)
@@ -47,15 +71,22 @@ func currentSession(r *http.Request) *Session {
 }
 
 func setSessionCookie(w http.ResponseWriter, r *http.Request, token string) {
-	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+	secure := isSecureRequest(r)
+	name := sessionCookie
+	if secure {
+		name = hostSessionCookie // "__Host-" requires Secure; see the const doc
+	}
 	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookie, Value: token, Path: "/",
+		Name: name, Value: token, Path: "/",
 		HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, MaxAge: 30 * 24 * 3600,
 	})
 }
 
 func clearSessionCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1})
+	// clear both names: the hardened one and any legacy cookie still held
+	for _, n := range []string{hostSessionCookie, sessionCookie} {
+		http.SetCookie(w, &http.Cookie{Name: n, Value: "", Path: "/", MaxAge: -1, Secure: n == hostSessionCookie})
+	}
 }
 
 // basicAuthUser authenticates a git/API client via HTTP Basic or token header.

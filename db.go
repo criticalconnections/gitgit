@@ -206,6 +206,26 @@ CREATE TABLE IF NOT EXISTS previews (
   expires_at INTEGER NOT NULL
 );
 
+-- A running instance of a branch, proxied at its own subdomain.
+CREATE TABLE IF NOT EXISTS preview_envs (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  preview_id   INTEGER NOT NULL,
+  repo_id      INTEGER NOT NULL,
+  ref          TEXT NOT NULL,
+  commit_sha   TEXT NOT NULL DEFAULT '',
+  status       TEXT NOT NULL DEFAULT 'queued',
+  port         INTEGER NOT NULL DEFAULT 0,
+  pid          INTEGER NOT NULL DEFAULT 0,
+  message      TEXT NOT NULL DEFAULT '',
+  log          TEXT NOT NULL DEFAULT '',
+  created_at   INTEGER NOT NULL,
+  started_at   INTEGER NOT NULL DEFAULT 0,
+  last_used_at INTEGER NOT NULL DEFAULT 0,
+  expires_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_envs_preview ON preview_envs(preview_id);
+CREATE INDEX IF NOT EXISTS idx_envs_status ON preview_envs(status);
+
 CREATE INDEX IF NOT EXISTS idx_pulls_repo_state ON pulls(repo_id, state);
 CREATE INDEX IF NOT EXISTS idx_issues_repo_state ON issues(repo_id, state);
 CREATE INDEX IF NOT EXISTS idx_comments_target ON comments(target, target_id);

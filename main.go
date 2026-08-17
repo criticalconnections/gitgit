@@ -12,13 +12,15 @@ import (
 )
 
 var (
-	addr     string
-	dataDir  string
-	baseURL  string // optional external URL override, e.g. https://git.example.com
-	devMode  bool
-	ciSlots  int
-	openReg  bool
-	startTme = time.Now()
+	addr            string
+	dataDir         string
+	baseURL         string // optional external URL override, e.g. https://git.example.com
+	devMode         bool
+	ciSlots         int
+	openReg         bool
+	previewDomain   string // wildcard base for Preview Environments, e.g. "preview.example.com"
+	previewInsecure bool   // build preview URLs with http:// (local development)
+	startTme        = time.Now()
 )
 
 func envOr(key, def string) string {
@@ -35,6 +37,10 @@ func main() {
 	flag.IntVar(&ciSlots, "ci-workers", 2, "number of concurrent CI job runners")
 	flag.BoolVar(&openReg, "open-registration", envOr("GITGIT_OPEN_REGISTRATION", "true") != "false",
 		"allow anyone to register; set false for internet-facing deployments (the first account can still be created to bootstrap the admin)")
+	flag.StringVar(&previewDomain, "preview-domain", envOr("GITGIT_PREVIEW_DOMAIN", ""),
+		"wildcard base domain for Preview Environments, e.g. preview.example.com (requires *.<domain> DNS and TLS)")
+	flag.BoolVar(&previewInsecure, "preview-insecure", envOr("GITGIT_PREVIEW_INSECURE", "") == "true",
+		"build preview URLs with http:// instead of https:// (local development)")
 	flag.BoolVar(&devMode, "dev", false, "dev mode: serve templates/static from disk instead of the embedded copies")
 	flag.Parse()
 
@@ -53,6 +59,8 @@ func main() {
 		log.Fatalf("open database: %v", err)
 	}
 	startCIWorkers(ciSlots)
+	resetPreviewEnvsOnBoot()
+	go reapPreviewEnvs()
 	requeueInterruptedRuns()
 
 	srv := &http.Server{

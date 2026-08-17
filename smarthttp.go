@@ -211,6 +211,7 @@ func processPush(repo *Repo, pusher *User, before, after map[string]string) {
 	for _, up := range updates {
 		log.Printf("push %s: %s %s -> %s", repo.FullName(), up.Branch, short(up.OldSHA), short(up.NewSHA))
 		if up.Deleted {
+			stopEnvsForRef(repo.ID, up.Branch)
 			continue
 		}
 		// Bump any open PR whose head branch moved, and note the update.
@@ -227,6 +228,14 @@ func processPush(repo *Repo, pusher *User, before, after map[string]string) {
 			event = "pull_request"
 		}
 		enqueueCI(repo, up.NewSHA, up.Branch, event)
+
+		// A Preview Environment pinned to the old commit is now stale; drop it
+		// so the next visit rebuilds at the new tip.
+		if p := previewByRepoRef(repo.ID, up.Branch); p != nil {
+			if e := envByPreview(p.ID); e != nil && e.CommitSHA != up.NewSHA {
+				stopPreviewEnv(e.ID, "superseded by a new push")
+			}
+		}
 	}
 
 	fireWebhooks(repo, "push", map[string]any{

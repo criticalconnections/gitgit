@@ -387,6 +387,21 @@ export interface UserProfile {
   repos: Repo[]
 }
 
+export type EnvStatus = "queued" | "building" | "running" | "failed" | "stopped" | "none"
+
+export interface PreviewEnv {
+  id: number
+  status: EnvStatus
+  commit: string
+  ref: string
+  message: string
+  created_at: number
+  started_at: number
+  last_used_at: number
+  expires_at: number
+  log?: string
+}
+
 export interface Preview {
   id: number
   ref: string
@@ -396,6 +411,13 @@ export interface Preview {
   expires_at: number
   hosts: string[]
   sha?: string
+  /** dedicated hostname when a preview domain is configured */
+  host?: string
+  /** absolute URL of the Preview Environment */
+  url?: string
+  /** repo declares a `run:` command in .gitgit/preview.yml */
+  runnable?: boolean
+  env?: PreviewEnv
 }
 
 // ---------- endpoints ----------
@@ -520,6 +542,12 @@ export const api = {
     post<Preview>(`/api/v1/repos/${enc(o)}/${enc(r)}/previews`, { ref }),
   deletePreview: (o: string, r: string, id: number) =>
     del<{ ok: boolean }>(`/api/v1/repos/${enc(o)}/${enc(r)}/previews/${id}`),
+  previewEnv: (o: string, r: string, id: number) =>
+    get<PreviewEnv>(`/api/v1/repos/${enc(o)}/${enc(r)}/previews/${id}/env`),
+  stopPreviewEnv: (o: string, r: string, id: number) =>
+    del<{ ok: boolean }>(`/api/v1/repos/${enc(o)}/${enc(r)}/previews/${id}/env`),
+  restartPreviewEnv: (o: string, r: string, id: number) =>
+    post<PreviewEnv>(`/api/v1/repos/${enc(o)}/${enc(r)}/previews/${id}/env/restart`),
 
   // CI
   listRuns: (o: string, r: string) => get<CIRun[]>(`/api/v1/repos/${enc(o)}/${enc(r)}/ci/runs`),

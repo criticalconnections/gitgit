@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { Check, Copy, ExternalLink, Eye, Loader2, Smartphone, Trash2 } from "lucide-react"
+import { Check, Copy, ExternalLink, Eye, Loader2, RotateCw, ScrollText, Server, Smartphone, Square, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import {
@@ -12,8 +12,133 @@ import {
 } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
-import { api, qrURL, type Preview, type Repo } from "@/lib/api"
+import { api, qrURL, type Preview, type PreviewEnv, type Repo } from "@/lib/api"
 import { shortSha } from "@/lib/format"
+import { cn } from "@/lib/utils"
+
+const ENV_LOOK: Record<string, { label: string; dot: string; text: string }> = {
+  queued: { label: "Queued", dot: "bg-muted-foreground", text: "text-muted-foreground" },
+  building: { label: "Building", dot: "bg-tangerine animate-pulse", text: "text-tangerine" },
+  running: { label: "Running", dot: "bg-primary", text: "text-primary" },
+  failed: { label: "Failed", dot: "bg-destructive", text: "text-destructive" },
+  stopped: { label: "Stopped", dot: "bg-muted-foreground", text: "text-muted-foreground" },
+  none: { label: "Not started", dot: "bg-muted-foreground", text: "text-muted-foreground" },
+}
+
+// EnvironmentPanel shows the state of the running instance behind a preview,
+// polling while it builds, with logs and start/stop controls.
+function EnvironmentPanel({
+  repo,
+  preview,
+  onChange,
+}: {
+  repo: Repo
+  preview: Preview
+  onChange: () => void
+}) {
+  const [env, setEnv] = useState<PreviewEnv | null>(preview.env ?? null)
+  const [showLog, setShowLog] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  const refresh = useCallback(async () => {
+    try {
+      setEnv(await api.previewEnv(repo.owner, repo.name, preview.id))
+    } catch {
+      /* transient */
+    }
+  }, [repo.owner, repo.name, preview.id])
+
+  // poll while the environment is coming up
+  useEffect(() => {
+    if (env && (env.status === "building" || env.status === "queued")) {
+      const t = setInterval(refresh, 2000)
+      return () => clearInterval(t)
+    }
+  }, [env, refresh])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  const status = env?.status ?? "none"
+  const look = ENV_LOOK[status] ?? ENV_LOOK.none
+
+  return (
+    <div className="rounded-xl border bg-muted/30 p-3">
+      <div className="flex items-center gap-2">
+        <Server className="size-4 text-muted-foreground" />
+        <span className="text-sm font-semibold">Preview Environment</span>
+        <span className={cn("ml-auto inline-flex items-center gap-1.5 text-xs font-medium", look.text)}>
+          <span className={cn("size-1.5 rounded-full", look.dot)} />
+          {look.label}
+        </span>
+      </div>
+
+      <p className="mt-1 text-xs text-muted-foreground">
+        {status === "running" && "Your app is running on its own domain, isolated from GitGit."}
+        {(status === "building" || status === "queued") && "Building this branch — the link works as soon as it's up."}
+        {status === "failed" && (env?.message || "The build or the app exited.")}
+        {status === "stopped" && (env?.message || "Not currently running.")}
+        {status === "none" && "Starts automatically the first time the link is opened."}
+      </p>
+
+      <div className="mt-2 flex items-center gap-2">
+        {repo.can_write && (
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true)
+                try {
+                  await api.restartPreviewEnv(repo.owner, repo.name, preview.id)
+                  toast.success("Rebuilding environment")
+                  await refresh()
+                  onChange()
+                } catch (e) {
+                  toast.error(e instanceof Error ? e.message : "failed")
+                } finally {
+                  setBusy(false)
+                }
+              }}
+            >
+              <RotateCw className="size-3.5" />
+              {status === "running" ? "Rebuild" : "Start"}
+            </Button>
+            {(status === "running" || status === "building") && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true)
+                  try {
+                    await api.stopPreviewEnv(repo.owner, repo.name, preview.id)
+                    await refresh()
+                  } finally {
+                    setBusy(false)
+                  }
+                }}
+              >
+                <Square className="size-3.5" /> Stop
+              </Button>
+            )}
+          </>
+        )}
+        <Button variant="ghost" size="sm" className="ml-auto" onClick={() => setShowLog(!showLog)}>
+          <ScrollText className="size-3.5" /> {showLog ? "Hide" : "Logs"}
+        </Button>
+      </div>
+
+      {showLog && (
+        <pre className="mt-2 max-h-56 overflow-auto rounded-lg bg-zinc-900 p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-zinc-200">
+          {env?.log?.trim() || "no output yet"}
+        </pre>
+      )}
+    </div>
+  )
+}
 
 // PreviewDialog creates (or reuses) a live preview of a branch and shows its
 // shareable URL plus a QR code for testing on a phone. The preview follows
@@ -55,8 +180,10 @@ export function PreviewDialog({
     }
   }, [open, create])
 
-  const url = preview && host ? host + preview.path : ""
-  const browserURL = preview ? preview.path : ""
+  // A Preview Environment owns its whole subdomain, so its URL is the origin
+  // itself; static previews live under a path on the main host.
+  const url = preview?.url ? preview.url : preview && host ? host + preview.path : ""
+  const browserURL = preview?.url ? preview.url : preview ? preview.path : ""
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -69,12 +196,18 @@ export function PreviewDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Eye className="size-5 text-primary" /> Branch preview
+            <Eye className="size-5 text-primary" /> {preview?.runnable ? "Preview Environment" : "Branch preview"}
           </DialogTitle>
           <DialogDescription>
-            A live, sandboxed preview of <code className="rounded bg-muted px-1.5 font-mono text-xs">{refName}</code>
-            {preview?.sha && <> at <span className="font-mono">{shortSha(preview.sha)}</span></>} — it follows the
-            branch, so new pushes appear on the same link.
+            {preview?.runnable ? "A running instance of " : "A live, sandboxed preview of "}
+            <code className="rounded bg-muted px-1.5 font-mono text-xs">{refName}</code>
+            {preview?.sha && (
+              <>
+                {" "}
+                at <span className="font-mono">{shortSha(preview.sha)}</span>
+              </>
+            )}{" "}
+            — it follows the branch, so new pushes appear on the same link.
           </DialogDescription>
         </DialogHeader>
 
@@ -92,6 +225,7 @@ export function PreviewDialog({
 
         {preview && (
           <div className="space-y-4">
+            {preview.runnable && <EnvironmentPanel repo={repo} preview={preview} onChange={create} />}
             <div className="flex items-center gap-2">
               <code className="min-w-0 flex-1 truncate rounded-lg border bg-muted px-3 py-2 font-mono text-xs">
                 {url || browserURL}
@@ -149,7 +283,7 @@ export function PreviewDialog({
 
             <div className="flex items-center justify-between text-xs text-muted-foreground">
               <span>
-                Anyone with the link can view this branch{repo.private && " (even on this private repo)"} · expires in{" "}
+                Anyone with the link can view this{repo.private && " (even on this private repo)"} · expires in{" "}
                 {Math.max(1, Math.round((preview.expires_at - Date.now() / 1000) / 3600))}h
               </span>
               <Button

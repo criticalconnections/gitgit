@@ -177,8 +177,8 @@ func handleAPIAuth(c *apiCtx, rest []string) {
 		setSessionCookie(c.w, c.r, s.Token)
 		c.out(200, userJSON(u))
 	case "logout":
-		if cookie, err := c.r.Cookie(sessionCookie); err == nil {
-			deleteSession(cookie.Value)
+		if tok := readSessionCookie(c.r); tok != "" {
+			deleteSession(tok)
 		}
 		clearSessionCookie(c.w)
 		c.out(200, map[string]bool{"ok": true})

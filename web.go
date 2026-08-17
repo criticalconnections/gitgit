@@ -74,7 +74,7 @@ func serveSPA(w http.ResponseWriter, r *http.Request) {
 // which get their sandbox CSP instead): deny framing to block clickjacking.
 func appSecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/p/") {
+		if !strings.HasPrefix(r.URL.Path, "/p/") && previewTokenFromHost(r.Host) == "" {
 			w.Header().Set("X-Frame-Options", "DENY")
 			w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
 		}
@@ -87,6 +87,13 @@ func buildHandler() http.Handler {
 	mux.HandleFunc("/api/v1/", handleAPI)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Preview Environments own their entire subdomain, so this check comes
+		// before any of GitGit's own routes.
+		if token := previewTokenFromHost(r.Host); token != "" {
+			servePreviewHost(w, r, token)
+			return
+		}
+
 		// branch previews: /p/{token}/{path...}
 		if strings.HasPrefix(r.URL.Path, "/p/") {
 			rest := strings.TrimPrefix(r.URL.Path, "/p/")
