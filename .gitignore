@@ -25,3 +25,6 @@ web/*.tsbuildinfo
 # os / editor
 .DS_Store
 *.swp
+
+# machine-specific tunnel config (contains local paths / tunnel UUID)
+deploy/*.local.yml
