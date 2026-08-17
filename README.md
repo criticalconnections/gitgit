@@ -35,9 +35,10 @@ for state, bare repositories on disk. No external services.
   `run:` command a preview stays static — the branch's files served straight
   from the tree, no build required. See
   [Preview Environments](#preview-environments) below.
-- **Import from GitHub** — mirror any repository with every branch and tag,
-  and optionally its issues and labels. Works with private repos via a token,
-  and with GitHub Enterprise or any other git host.
+- **Import** — mirror a repository from GitHub with every branch, tag, and
+  optionally its issues and labels (private repos via a token; GitHub
+  Enterprise and other git hosts work too), or upload a `.zip` from your
+  machine.
 - **Issues, labels, webhooks, stars, collaborators** with read/write/admin
   roles and private repositories.
 - **JSON API** under `/api/v1` — repos, branches, tags, tree/blob/commits,
@@ -163,6 +164,24 @@ worth supplying for issue imports — unauthenticated API calls are limited to
 
 Imports run in the background with a live log, since a large mirror takes
 minutes.
+
+### Uploading a .zip
+
+The **Upload .zip** tab takes an archive from your machine — drag it in or
+browse. A plain project folder becomes the repository's initial commit; an
+archive that contains a `.git` directory keeps its history instead. A single
+wrapping folder (`myproject-main/`, as produced by "Download ZIP") is stripped,
+so the files land at the repository root.
+
+```bash
+curl -u you:token -F file=@project.zip -F name=project \
+  https://git.example.com/api/v1/import/zip
+```
+
+Archives are treated as hostile input: entries containing `..` or absolute
+paths are **rejected** rather than silently rewritten, symlinks are skipped,
+and uploads are capped (500 MB compressed, 2 GB expanded, 20k entries) so a
+zip bomb cannot exhaust the disk.
 
 ```bash
 curl -u you:token -X POST https://git.example.com/api/v1/import \

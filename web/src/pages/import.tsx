@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { AlertCircle, ArrowRight, CheckCircle2, CloudDownload, Loader2, Lock } from "lucide-react"
+import { AlertCircle, ArrowRight, CheckCircle2, CloudDownload, FileArchive, Loader2, Lock, Upload } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { cn } from "@/lib/utils"
 import { ErrorNote } from "@/components/shared"
 import { useAuth } from "@/lib/auth"
 import { api, type ImportJob } from "@/lib/api"
@@ -34,6 +36,9 @@ export default function ImportPage() {
   const [error, setError] = useState("")
   const [job, setJob] = useState<ImportJob | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [zipFile, setZipFile] = useState<File | null>(null)
+  const [zipName, setZipName] = useState("")
+  const [dragging, setDragging] = useState(false)
   const logRef = useRef<HTMLPreElement>(null)
 
   useEffect(() => {
@@ -100,6 +105,32 @@ export default function ImportPage() {
     }
   }
 
+  const submitZip = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!zipFile) return
+    setError("")
+    setSubmitting(true)
+    try {
+      const j = await api.uploadZip(zipFile, { name: zipName.trim() || undefined, private: isPrivate })
+      setJob(j)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "upload failed")
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const pickZip = (f: File | null | undefined) => {
+    if (!f) return
+    if (!f.name.toLowerCase().endsWith(".zip")) {
+      setError("Only .zip archives are supported.")
+      return
+    }
+    setError("")
+    setZipFile(f)
+    if (!zipName) setZipName(f.name.replace(/\.zip$/i, ""))
+  }
+
   const running = job?.status === "running"
 
   return (
@@ -109,7 +140,7 @@ export default function ImportPage() {
           <GitHubMark className="size-6" /> Import a repository
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Bring a repository over from GitHub — every branch and tag, and optionally its issues.
+          Bring code in from GitHub with its full history and issues, or upload a .zip from your machine.
         </p>
       </div>
 
@@ -117,11 +148,21 @@ export default function ImportPage() {
         <CardHeader>
           <CardTitle className="text-base">Source</CardTitle>
           <CardDescription>
-            Paste a URL or <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">owner/repo</code>. Other
-            git hosts work too.
+            Pull it from a git host, or upload an archive from your machine.
           </CardDescription>
         </CardHeader>
         <CardContent>
+        <Tabs defaultValue="remote">
+          <TabsList className="mb-4 w-full">
+            <TabsTrigger value="remote" disabled={!!job}>
+              <CloudDownload className="size-4" /> From GitHub
+            </TabsTrigger>
+            <TabsTrigger value="zip" disabled={!!job}>
+              <FileArchive className="size-4" /> Upload .zip
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="remote">
           <form onSubmit={submit} className="space-y-5">
             <div className="space-y-2">
               <Label htmlFor="source">Repository</Label>
@@ -201,6 +242,89 @@ export default function ImportPage() {
               </Button>
             )}
           </form>
+          </TabsContent>
+
+          <TabsContent value="zip">
+            <form onSubmit={submitZip} className="space-y-5">
+              {/* drop zone */}
+              <label
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  setDragging(true)
+                }}
+                onDragLeave={() => setDragging(false)}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  setDragging(false)
+                  pickZip(e.dataTransfer.files?.[0])
+                }}
+                className={cn(
+                  "flex cursor-pointer flex-col items-center gap-2 rounded-xl border border-dashed px-6 py-10 text-center transition-colors",
+                  dragging ? "border-primary bg-primary/5" : "hover:bg-muted/40",
+                  job && "pointer-events-none opacity-60",
+                )}
+              >
+                <input
+                  type="file"
+                  accept=".zip,application/zip"
+                  className="sr-only"
+                  disabled={!!job}
+                  onChange={(e) => pickZip(e.target.files?.[0])}
+                />
+                {zipFile ? (
+                  <>
+                    <FileArchive className="size-7 text-primary" />
+                    <span className="text-sm font-medium">{zipFile.name}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {(zipFile.size / 1024 / 1024).toFixed(1)} MB · click to choose another
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="size-7 text-muted-foreground" />
+                    <span className="text-sm font-medium">Drop a .zip here, or click to browse</span>
+                    <span className="text-xs text-muted-foreground">
+                      A project folder becomes the initial commit. An archive containing a{" "}
+                      <code className="font-mono">.git</code> directory keeps its history.
+                    </span>
+                  </>
+                )}
+              </label>
+
+              <div className="space-y-2">
+                <Label htmlFor="zipname">Name on GitGit</Label>
+                <div className="flex items-center gap-2">
+                  <span className="shrink-0 font-mono text-sm text-muted-foreground">{user?.username}/</span>
+                  <Input
+                    id="zipname"
+                    value={zipName}
+                    onChange={(e) => setZipName(e.target.value)}
+                    placeholder="repository-name"
+                    pattern="[A-Za-z0-9._-]+"
+                    disabled={!!job}
+                  />
+                </div>
+              </div>
+
+              <label className="flex items-start justify-between gap-4 rounded-lg border p-3">
+                <span>
+                  <span className="text-sm font-medium">Private repository</span>
+                  <span className="block text-xs text-muted-foreground">Only you and collaborators can see it.</span>
+                </span>
+                <Switch checked={isPrivate} onCheckedChange={setPrivate} disabled={!!job} />
+              </label>
+
+              {error && <ErrorNote message={error} />}
+
+              {!job && (
+                <Button type="submit" disabled={submitting || !zipFile} className="w-full">
+                  {submitting ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+                  {submitting ? "Uploading…" : "Upload and create repository"}
+                </Button>
+              )}
+            </form>
+          </TabsContent>
+        </Tabs>
 
           {job && (
             <div className="mt-5 space-y-3">

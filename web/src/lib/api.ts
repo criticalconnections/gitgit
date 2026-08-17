@@ -465,6 +465,27 @@ export const api = {
     import_issues?: boolean
   }) => post<ImportJob>("/api/v1/import", body),
   importStatus: (id: number) => get<ImportJob>(`/api/v1/import/${id}`),
+  uploadZip: async (file: File, opts: { name?: string; private?: boolean }) => {
+    const body = new FormData()
+    body.append("file", file)
+    if (opts.name) body.append("name", opts.name)
+    if (opts.private) body.append("private", "true")
+    const res = await fetch("/api/v1/import/zip", { method: "POST", body, credentials: "same-origin" })
+    let data: unknown
+    try {
+      data = await res.json()
+    } catch {
+      data = {}
+    }
+    if (!res.ok) {
+      const msg =
+        typeof data === "object" && data !== null && "error" in data
+          ? String((data as { error: string }).error)
+          : `upload failed (${res.status})`
+      throw new ApiError(res.status, msg)
+    }
+    return data as ImportJob
+  },
 
   repo: (o: string, r: string) => get<Repo>(`/api/v1/repos/${enc(o)}/${enc(r)}`),
   updateRepo: (o: string, r: string, body: Record<string, unknown>) =>

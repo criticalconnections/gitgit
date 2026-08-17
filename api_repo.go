@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -75,6 +77,8 @@ func handleAPIImport(c *apiCtx, rest []string) {
 		return
 	}
 	switch {
+	case len(rest) == 1 && rest[0] == "zip" && c.r.Method == http.MethodPost:
+		handleAPIImportZip(c)
 	case len(rest) == 0 && c.r.Method == http.MethodPost:
 		var req struct {
 			Source       string `json:"source"`
@@ -106,6 +110,63 @@ func handleAPIImport(c *apiCtx, rest []string) {
 	default:
 		c.err(404, "unknown endpoint")
 	}
+}
+
+// handleAPIImportZip receives a multipart upload and turns it into a
+// repository. The archive is spooled to disk rather than held in memory.
+func handleAPIImportZip(c *apiCtx) {
+	c.r.Body = http.MaxBytesReader(c.w, c.r.Body, maxZipUpload)
+	if err := c.r.ParseMultipartForm(32 << 20); err != nil {
+		c.err(413, fmt.Sprintf("upload too large or malformed (limit %d MB)", maxZipUpload>>20))
+		return
+	}
+	defer c.r.MultipartForm.RemoveAll()
+
+	file, header, err := c.r.FormFile("file")
+	if err != nil {
+		c.err(422, "a .zip file is required")
+		return
+	}
+	defer file.Close()
+	if !strings.HasSuffix(strings.ToLower(header.Filename), ".zip") {
+		c.err(422, "only .zip archives are supported")
+		return
+	}
+
+	// zip.NewReader needs io.ReaderAt; multipart gives that for spooled files
+	// but not for small in-memory ones, so normalize through a temp file.
+	ra, ok := file.(io.ReaderAt)
+	size := header.Size
+	if !ok {
+		tmp, terr := os.CreateTemp(dataDir, "upload-*.zip")
+		if terr != nil {
+			c.err(500, terr.Error())
+			return
+		}
+		defer os.Remove(tmp.Name())
+		defer tmp.Close()
+		n, cerr := io.Copy(tmp, file)
+		if cerr != nil {
+			c.err(500, cerr.Error())
+			return
+		}
+		ra, size = tmp, n
+	}
+
+	job, repo, err := startZipImport(c.u, ra, size, ZipImportRequest{
+		Name:     c.r.FormValue("name"),
+		Private:  c.r.FormValue("private") == "true",
+		Filename: header.Filename,
+	})
+	if err != nil {
+		c.err(422, err.Error())
+		return
+	}
+	m := importJobJSON(job)
+	if repo != nil {
+		m["repo"] = repo.FullName()
+	}
+	c.out(201, m)
 }
 
 func importJobJSON(j *ImportJob) map[string]any {
