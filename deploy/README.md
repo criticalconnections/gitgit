@@ -47,10 +47,27 @@ jobs isolated from the host filesystem.
 ## 2. Create the tunnel
 
 ```bash
-cloudflared tunnel login                 # once per machine
+cloudflared tunnel login                 # once per machine, per zone
 cloudflared tunnel create gitgit         # prints a UUID and writes <UUID>.json
-cloudflared tunnel route dns gitgit git.example.com
+deploy/route-dns.sh git.example.com      # guarded; see the warning below
 ```
+
+> **Do not use `cloudflared tunnel route dns` directly on a machine that has
+> other tunnels.** It has two footguns that combine badly:
+>
+> 1. `cloudflared tunnel login` prints an error but **exits 0** when a
+>    `cert.pem` already exists, so `login && route dns` runs anyway with the
+>    old credentials.
+> 2. `route dns` **ignores the tunnel-name argument**, taking the tunnel from
+>    `~/.cloudflared/config.yml`, and resolves the hostname relative to
+>    whichever zone `cert.pem` is scoped to. Asking for `git.example.com`
+>    while the cert is scoped to `other.com` does not fail — it creates
+>    `git.example.com.other.com` on the wrong zone, pointing at the wrong
+>    tunnel.
+>
+> `deploy/route-dns.sh` checks the cert's zone first, refuses on a mismatch
+> with instructions, and writes the record through the API so the global
+> config cannot hijack the target.
 
 Fill the UUID, credentials path, and hostname into
 [`deploy/cloudflared.yml`](cloudflared.yml).
