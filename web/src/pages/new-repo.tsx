@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { PageLoading } from "@/components/shared"
-import { api } from "@/lib/api"
+import { api, type Org } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
 
 export default function NewRepo() {
@@ -24,10 +24,22 @@ export default function NewRepo() {
   const [isPrivate, setIsPrivate] = useState(false)
   const [autoInit, setAutoInit] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [owner, setOwner] = useState("")
+  const [orgs, setOrgs] = useState<Org[]>([])
 
   useEffect(() => {
     if (!loading && !user) navigate("/login")
   }, [loading, user, navigate])
+
+  // Organizations you own are valid owners for a new repository; ones you are
+  // merely a member of are not, so the picker only offers what will succeed.
+  useEffect(() => {
+    if (!user) return
+    api
+      .myOrgs()
+      .then((all) => setOrgs(all.filter((o) => o.role === "owner")))
+      .catch(() => setOrgs([]))
+  }, [user])
 
   if (loading || !user) return <PageLoading />
 
@@ -41,6 +53,7 @@ export default function NewRepo() {
         description: description.trim() || undefined,
         private: isPrivate,
         auto_init: autoInit,
+        owner: owner || undefined,
       })
       navigate(`/${created.full_name}`)
     } catch (e) {
@@ -64,9 +77,24 @@ export default function NewRepo() {
             <div className="space-y-2">
               <Label htmlFor="repo-name">Repository name</Label>
               <div className="flex items-center gap-2">
-                <span className="shrink-0 text-sm text-muted-foreground">
-                  {user.username}&nbsp;/
-                </span>
+                {orgs.length > 0 ? (
+                  <select
+                    value={owner}
+                    onChange={(e) => setOwner(e.target.value)}
+                    aria-label="Owner"
+                    className="h-9 max-w-40 shrink-0 truncate rounded-md border bg-background px-2 text-sm"
+                  >
+                    <option value="">{user.username}</option>
+                    {orgs.map((o) => (
+                      <option key={o.username} value={o.username}>
+                        {o.username}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="shrink-0 text-sm text-muted-foreground">{user.username}</span>
+                )}
+                <span className="shrink-0 text-sm text-muted-foreground">/</span>
                 <Input
                   id="repo-name"
                   value={name}

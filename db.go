@@ -31,7 +31,17 @@ CREATE TABLE IF NOT EXISTS users (
   full_name     TEXT NOT NULL DEFAULT '',
   password_hash TEXT NOT NULL,
   is_admin      INTEGER NOT NULL DEFAULT 0,
+  is_org        INTEGER NOT NULL DEFAULT 0,
   created_at    INTEGER NOT NULL
+);
+
+-- Membership of an organization (a users row with is_org set).
+CREATE TABLE IF NOT EXISTS org_members (
+  org_id     INTEGER NOT NULL,
+  user_id    INTEGER NOT NULL,
+  role       TEXT NOT NULL DEFAULT 'member',
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (org_id, user_id)
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -268,6 +278,7 @@ func openDB(path string) error {
 	// added after a release have to be applied to it explicitly.
 	ensureColumn("previews", "env_ok", "INTEGER NOT NULL DEFAULT 0")
 	ensureColumn("previews", "env_paused", "INTEGER NOT NULL DEFAULT 0")
+	ensureColumn("users", "is_org", "INTEGER NOT NULL DEFAULT 0")
 	for _, c := range []struct{ col, ddl string }{
 		{"step", "TEXT NOT NULL DEFAULT ''"},
 		{"step_n", "INTEGER NOT NULL DEFAULT 0"},
@@ -315,7 +326,10 @@ type User struct {
 	FullName     string
 	PasswordHash string
 	IsAdmin      bool
-	CreatedAt    int64
+	// IsOrg marks an organization rather than a person. Organizations own
+	// repositories and have members, but can never sign in.
+	IsOrg     bool
+	CreatedAt int64
 }
 
 func (u *User) DisplayName() string {
@@ -330,14 +344,14 @@ func (u *User) DisplayName() string {
 
 func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	u := &User{}
-	err := row.Scan(&u.ID, &u.Username, &u.Email, &u.FullName, &u.PasswordHash, &u.IsAdmin, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Username, &u.Email, &u.FullName, &u.PasswordHash, &u.IsAdmin, &u.IsOrg, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
 	return u, nil
 }
 
-const userCols = "id, username, email, full_name, password_hash, is_admin, created_at"
+const userCols = "id, username, email, full_name, password_hash, is_admin, is_org, created_at"
 
 func createUser(username, email, password string) (*User, error) {
 	if !validSlug(username) {
@@ -384,6 +398,12 @@ func getUserByName(name string) (*User, error) {
 }
 
 func checkPassword(u *User, password string) bool {
+	// An organization is not a login. Its row has an empty hash, which bcrypt
+	// would reject anyway, but refusing explicitly keeps that a decision
+	// rather than an accident of the hash format.
+	if u == nil || u.IsOrg {
+		return false
+	}
 	return bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)) == nil
 }
 
@@ -680,7 +700,7 @@ func canRead(u *User, r *Repo) bool {
 	if u == nil {
 		return false
 	}
-	return u.IsAdmin || u.ID == r.OwnerID || collabRole(r.ID, u.ID) != ""
+	return u.IsAdmin || u.ID == r.OwnerID || collabRole(r.ID, u.ID) != "" || orgRole(r.OwnerID, u.ID) != ""
 }
 
 func canWrite(u *User, r *Repo) bool {
@@ -688,6 +708,9 @@ func canWrite(u *User, r *Repo) bool {
 		return false
 	}
 	if u.IsAdmin || u.ID == r.OwnerID {
+		return true
+	}
+	if isOrgOwner(r.OwnerID, u.ID) {
 		return true
 	}
 	role := collabRole(r.ID, u.ID)
@@ -701,7 +724,7 @@ func canAdmin(u *User, r *Repo) bool {
 	if u.IsAdmin || u.ID == r.OwnerID {
 		return true
 	}
-	return collabRole(r.ID, u.ID) == "admin"
+	return collabRole(r.ID, u.ID) == "admin" || isOrgOwner(r.OwnerID, u.ID)
 }
 
 type Collaborator struct {

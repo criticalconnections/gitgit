@@ -1,5 +1,5 @@
 import { Link, Outlet, useNavigate } from "react-router-dom"
-import { CloudDownload, Compass, LogOut, Moon, Plus, Settings, Sun, User as UserIcon } from "lucide-react"
+import { Building2, CloudDownload, Compass, LogOut, Moon, Plus, Settings, Sun, User as UserIcon } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import {
@@ -76,6 +76,9 @@ export function AppShell() {
                     <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={() => navigate(`/${user.username}`)}>
                       <UserIcon className="size-4" /> Profile
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => navigate("/organizations/new")}>
+                      <Building2 className="size-4" /> New organization
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => navigate("/settings")}>
                       <Settings className="size-4" /> Settings

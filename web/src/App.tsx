@@ -12,6 +12,7 @@ const Dashboard = lazy(() => import("@/pages/dashboard"))
 const Explore = lazy(() => import("@/pages/explore"))
 const Profile = lazy(() => import("@/pages/profile"))
 const NewRepo = lazy(() => import("@/pages/new-repo"))
+const NewOrg = lazy(() => import("@/pages/new-org"))
 const ImportRepo = lazy(() => import("@/pages/import"))
 const UserSettings = lazy(() => import("@/pages/user-settings"))
 const NotFound = lazy(() => import("@/pages/not-found"))
@@ -48,6 +49,7 @@ export default function App() {
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/explore" element={<Explore />} />
               <Route path="/new" element={<NewRepo />} />
+              <Route path="/organizations/new" element={<NewOrg />} />
               <Route path="/import" element={<ImportRepo />} />
               <Route path="/settings" element={<UserSettings />} />
               <Route path="/:owner" element={<Profile />} />

@@ -46,6 +46,8 @@ export interface User {
   email: string
   full_name: string
   is_admin: boolean
+  /** an organization rather than a person */
+  is_org?: boolean
   created_at: number
 }
 
@@ -385,6 +387,22 @@ export interface Webhook {
 export interface UserProfile {
   user: User
   repos: Repo[]
+  /** organizations only: whether the viewer can manage members */
+  can_admin?: boolean
+  role?: string
+}
+
+/** An organization is a User row with is_org set: it owns repositories and has
+ *  members, but can never sign in. */
+export interface Org extends User {
+  description?: string
+  role?: string
+  can_admin?: boolean
+  repos?: Repo[]
+}
+
+export interface OrgMember extends User {
+  role: string
 }
 
 export interface ImportJob {
@@ -483,7 +501,17 @@ export const api = {
   // users + repos
   userProfile: (username: string) => get<UserProfile>(`/api/v1/users/${enc(username)}`),
   listRepos: (q?: string) => get<Repo[]>(`/api/v1/repos${q ? `?q=${enc(q)}` : ""}`),
-  createRepo: (body: { name: string; description?: string; private?: boolean; auto_init?: boolean }) =>
+
+  // organizations
+  myOrgs: () => get<Org[]>("/api/v1/orgs"),
+  createOrg: (name: string, description: string) => post<Org>("/api/v1/orgs", { name, description }),
+  org: (name: string) => get<Org>(`/api/v1/orgs/${enc(name)}`),
+  orgMembers: (name: string) => get<OrgMember[]>(`/api/v1/orgs/${enc(name)}/members`),
+  addOrgMember: (name: string, username: string, role: string) =>
+    post<{ username: string; role: string }>(`/api/v1/orgs/${enc(name)}/members`, { username, role }),
+  removeOrgMember: (name: string, username: string) =>
+    del<{ ok: boolean }>(`/api/v1/orgs/${enc(name)}/members/${enc(username)}`),
+  createRepo: (body: { name: string; description?: string; private?: boolean; auto_init?: boolean; owner?: string }) =>
     post<Repo>("/api/v1/repos", body),
 
   // import from GitHub (or any git host)

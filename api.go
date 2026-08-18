@@ -94,6 +94,8 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		handleAPIUser(c, parts[1:])
 	case parts[0] == "users" && len(parts) == 2:
 		handleAPIUserProfile(c, parts[1])
+	case parts[0] == "orgs":
+		handleAPIOrgs(c, parts[1:])
 	case parts[0] == "repos" && len(parts) == 1:
 		handleAPIRepoIndex(c)
 	case parts[0] == "import":
@@ -264,20 +266,24 @@ func handleAPIUserProfile(c *apiCtx, name string) {
 		c.err(404, "user not found")
 		return
 	}
-	includePrivate := c.u != nil && (c.u.ID == u.ID || c.u.IsAdmin)
-	repos := listReposForOwner(u.ID, includePrivate)
-	if !includePrivate && c.u != nil {
-		for _, rp := range listReposForOwner(u.ID, true) {
-			if rp.IsPrivate && collabRole(rp.ID, c.u.ID) != "" {
-				repos = append(repos, rp)
-			}
+	// Ask canRead rather than reimplementing visibility here: it is the one
+	// place that knows about collaborators, organization membership and site
+	// admins, and a second copy of that logic would drift.
+	out := []map[string]any{}
+	for _, rp := range listReposForOwner(u.ID, true) {
+		if canRead(c.u, rp) {
+			out = append(out, repoJSON(rp, c.u))
 		}
 	}
-	out := []map[string]any{}
-	for _, rp := range repos {
-		out = append(out, repoJSON(rp, c.u))
+	body := map[string]any{"user": userJSON(u), "repos": out}
+	if u.IsOrg {
+		body["can_admin"] = c.u != nil && (c.u.IsAdmin || isOrgOwner(u.ID, c.u.ID))
+		body["role"] = ""
+		if c.u != nil {
+			body["role"] = orgRole(u.ID, c.u.ID)
+		}
 	}
-	c.out(200, map[string]any{"user": userJSON(u), "repos": out})
+	c.out(200, body)
 }
 
 // ---------- repo index ----------
@@ -304,11 +310,25 @@ func handleAPIRepoIndex(c *apiCtx) {
 			Description string `json:"description"`
 			Private     bool   `json:"private"`
 			AutoInit    bool   `json:"auto_init"`
+			Owner       string `json:"owner"` // an organization, or empty for yourself
 		}
 		if !c.decode(&req) {
 			return
 		}
-		repo, err := insertRepo(c.u.ID, strings.TrimSpace(req.Name), strings.TrimSpace(req.Description), req.Private)
+		ownerID := c.u.ID
+		if org := strings.TrimSpace(req.Owner); org != "" && !strings.EqualFold(org, c.u.Username) {
+			target, err := getUserByName(org)
+			if err != nil || !target.IsOrg {
+				c.err(422, "no such organization")
+				return
+			}
+			if !isOrgOwner(target.ID, c.u.ID) && !c.u.IsAdmin {
+				c.err(403, "you need to be an owner of "+target.Username)
+				return
+			}
+			ownerID = target.ID
+		}
+		repo, err := insertRepo(ownerID, strings.TrimSpace(req.Name), strings.TrimSpace(req.Description), req.Private)
 		if err != nil {
 			c.err(422, err.Error())
 			return
@@ -335,7 +355,8 @@ func userJSON(u *User) map[string]any {
 	}
 	return map[string]any{
 		"id": u.ID, "username": u.Username, "email": u.Email,
-		"full_name": u.FullName, "is_admin": u.IsAdmin, "created_at": u.CreatedAt,
+		"full_name": u.FullName, "is_admin": u.IsAdmin, "is_org": u.IsOrg,
+		"created_at": u.CreatedAt,
 	}
 }
 
