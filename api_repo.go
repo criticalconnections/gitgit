@@ -68,6 +68,8 @@ func handleAPIRepo(c *apiCtx, repo *Repo, rest []string) {
 		apiPreviews(c, repo, rest[1:])
 	case rest[0] == "secrets":
 		apiSecrets(c, repo, rest[1:])
+	case rest[0] == "deployments":
+		apiDeployments(c, repo, rest[1:])
 	default:
 		c.err(404, "unknown endpoint")
 	}

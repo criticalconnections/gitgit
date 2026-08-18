@@ -447,6 +447,28 @@ export interface SearchResults {
   users?: User[]
 }
 
+export interface Deployment {
+  id: number
+  number: number
+  environment: string
+  ref: string
+  commit: string
+  status: "queued" | "running" | "success" | "failure"
+  url?: string
+  creator?: string
+  created_at: number
+  finished_at: number
+  log?: string
+}
+
+export interface DeployEnvironment {
+  name: string
+  url?: string
+  auto_deploy?: string
+  require_approval?: boolean
+  current?: Deployment
+}
+
 export interface SSHKey {
   id: number
   title: string
@@ -544,6 +566,16 @@ export const api = {
     patch<User>("/api/v1/user", { email, fullName }),
   changePassword: (current: string, password: string) =>
     post<{ ok: boolean }>("/api/v1/user/password", { current, password }),
+  // deployments
+  deployments: (o: string, r: string) =>
+    get<{ environments: DeployEnvironment[]; deployments: Deployment[] }>(
+      `/api/v1/repos/${enc(o)}/${enc(r)}/deployments`,
+    ),
+  deployment: (o: string, r: string, id: number) =>
+    get<Deployment>(`/api/v1/repos/${enc(o)}/${enc(r)}/deployments/${id}`),
+  deploy: (o: string, r: string, environment: string, ref?: string) =>
+    post<Deployment>(`/api/v1/repos/${enc(o)}/${enc(r)}/deployments`, { environment, ref }),
+
   // SSH keys
   listSSHKeys: () => get<SSHKey[]>("/api/v1/user/keys"),
   addSSHKey: (title: string, key: string) => post<SSHKey>("/api/v1/user/keys", { title, key }),

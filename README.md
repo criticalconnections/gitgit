@@ -229,6 +229,34 @@ Known limits: issue import stops at 1000 issues, and because job progress is
 held in memory, restarting the server during an import orphans the job (the
 repository may be left partially mirrored — delete it and re-import).
 
+## Deployments
+
+Declare your environments in `.gitgit/deploy.yml`:
+
+```yaml
+environments:
+  staging:
+    steps:
+      - npm ci
+      - npm run deploy:staging
+    url: https://staging.example.com
+    auto_deploy: main          # ship every push to this branch
+  production:
+    steps: [ ./scripts/ship.sh ]
+    url: https://example.com
+    require_approval: true     # never automatic, whatever else is set
+```
+
+The **Deployments** tab shows what is live in each environment, who put it
+there and when, with the full log. Steps run in a clean clone at the deployed
+commit with `GITGIT_ENVIRONMENT`, `GITGIT_SHA`, `GITGIT_REF` and
+`GITGIT_DEPLOY_NUMBER` set, and receive the repository's
+[secrets](#secrets) — redacted from the log exactly as in a preview build.
+
+`require_approval` always wins over `auto_deploy`, so an environment marked
+manual cannot be reached by a push even if both are set. Deploying needs write
+access.
+
 ## Preview Environments
 
 A Preview Environment is an ephemeral, running instance of a branch.

@@ -8,8 +8,9 @@ import {
   Layers,
   Lock,
   PlayCircle,
+  Rocket,
   Settings,
-  Star,
+  Star
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -63,6 +64,7 @@ export function RepoLayout() {
     { to: `${base}/stacks`, label: "Stacks", icon: Layers },
     { to: `${base}/issues`, label: "Issues", icon: CircleDot, count: repo.open_issues },
     { to: `${base}/ci`, label: "CI", icon: PlayCircle },
+    { to: `${base}/deployments`, label: "Deployments", icon: Rocket },
     { to: `${base}/branches`, label: "Branches", icon: GitBranch },
     ...(repo.can_admin ? [{ to: `${base}/settings`, label: "Settings", icon: Settings }] : []),
   ]

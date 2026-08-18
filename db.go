@@ -247,6 +247,24 @@ CREATE TABLE IF NOT EXISTS preview_envs (
 -- Public keys, in authorized_keys form. The fingerprint is unique across all
 -- users: one key must map to exactly one account, or "who pushed this" has no
 -- answer.
+-- What was shipped where, by whom, with the log. "What is running in
+-- production" should be answerable without anybody having to remember.
+CREATE TABLE IF NOT EXISTS deployments (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo_id     INTEGER NOT NULL,
+  number      INTEGER NOT NULL,
+  environment TEXT NOT NULL,
+  ref         TEXT NOT NULL DEFAULT '',
+  commit_sha  TEXT NOT NULL DEFAULT '',
+  status      TEXT NOT NULL DEFAULT 'queued',
+  url         TEXT NOT NULL DEFAULT '',
+  log         TEXT NOT NULL DEFAULT '',
+  creator_id  INTEGER NOT NULL DEFAULT 0,
+  created_at  INTEGER NOT NULL,
+  finished_at INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_deploy_repo ON deployments(repo_id, id DESC);
+
 CREATE TABLE IF NOT EXISTS ssh_keys (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id      INTEGER NOT NULL,

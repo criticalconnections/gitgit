@@ -229,6 +229,9 @@ func processPush(repo *Repo, pusher *User, before, after map[string]string) {
 		}
 		enqueueCI(repo, up.NewSHA, up.Branch, event)
 
+		// Environments configured to follow this branch ship the new commit.
+		autoDeployOnPush(repo, pusher, up.Branch, up.NewSHA)
+
 		// A Preview Environment pinned to the old commit is now stale; drop it
 		// so the next visit rebuilds at the new tip.
 		if p := previewByRepoRef(repo.ID, up.Branch); p != nil {

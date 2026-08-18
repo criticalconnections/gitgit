@@ -34,6 +34,7 @@ const Issue = lazy(() => import("@/pages/repo/issue"))
 const CI = lazy(() => import("@/pages/repo/ci"))
 const CIRun = lazy(() => import("@/pages/repo/ci-run"))
 const RepoSettings = lazy(() => import("@/pages/repo/settings"))
+const RepoDeployments = lazy(() => import("@/pages/repo/deployments"))
 
 export default function App() {
   return (
@@ -76,6 +77,7 @@ export default function App() {
                 <Route path="issue/:number" element={<Issue />} />
                 <Route path="ci" element={<CI />} />
                 <Route path="ci/:number" element={<CIRun />} />
+                <Route path="deployments" element={<RepoDeployments />} />
                 <Route path="settings" element={<RepoSettings />} />
               </Route>
               <Route path="*" element={<NotFound />} />
