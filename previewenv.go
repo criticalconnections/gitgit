@@ -17,6 +17,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -27,6 +28,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -228,12 +230,15 @@ func ensurePreviewEnv(repo *Repo, p *Preview, sha string) *PreviewEnv {
 	if detected != nil && !p.EnvOK {
 		return nil
 	}
-	return startPreviewEnv(repo, p, sha, cfg)
+	return startPreviewEnv(repo, p, sha, cfg, detected != nil)
 }
 
 // startPreviewEnv creates or reuses the environment for a preview, bypassing
 // the approval check — callers must have established consent themselves.
-func startPreviewEnv(repo *Repo, p *Preview, sha string, cfg *PreviewConfig) *PreviewEnv {
+// `detected` says the configuration was inferred rather than committed, which
+// decides whether a wrong output directory is a failure or something to
+// recover from.
+func startPreviewEnv(repo *Repo, p *Preview, sha string, cfg *PreviewConfig, detected bool) *PreviewEnv {
 	envMu.Lock()
 	defer envMu.Unlock()
 
@@ -270,7 +275,7 @@ func startPreviewEnv(repo *Repo, p *Preview, sha string, cfg *PreviewConfig) *Pr
 		return nil
 	}
 	id, _ := res.LastInsertId()
-	go buildAndRunEnv(id, cfg)
+	go buildAndRunEnv(id, cfg, detected)
 	return envByID(id)
 }
 
@@ -288,11 +293,11 @@ func envWorkspace(id int64) string {
 	return filepath.Join(dataDir, "envs", fmt.Sprintf("env-%d", id))
 }
 
-func buildAndRunEnv(id int64, cfg *PreviewConfig) {
+func buildAndRunEnv(id int64, cfg *PreviewConfig, detected bool) {
 	defer func() {
 		if v := recover(); v != nil {
 			log.Printf("preview-env %d panic: %v", id, v)
-			setEnvStatus(id, "failed", fmt.Sprint(v))
+			failEnv(id, fmt.Sprint(v))
 		}
 	}()
 
@@ -306,7 +311,7 @@ func buildAndRunEnv(id int64, cfg *PreviewConfig) {
 	}
 	repo, err := getRepoByID(e.RepoID)
 	if err != nil {
-		setEnvStatus(id, "failed", "repository is gone")
+		failEnv(id, "repository is gone")
 		return
 	}
 	setEnvStatus(id, "building", "")
@@ -314,19 +319,19 @@ func buildAndRunEnv(id int64, cfg *PreviewConfig) {
 	ws := envWorkspace(id)
 	os.RemoveAll(ws)
 	if _, err := gitRun("", "clone", "--quiet", "--no-hardlinks", repo.DiskPath(), ws); err != nil {
-		setEnvStatus(id, "failed", "clone failed")
+		failEnv(id, "clone failed")
 		appendEnvLog(id, "clone failed: "+err.Error()+"\n")
 		return
 	}
 	if _, err := gitRun(ws, "checkout", "--quiet", e.CommitSHA); err != nil {
-		setEnvStatus(id, "failed", "checkout failed")
+		failEnv(id, "checkout failed")
 		appendEnvLog(id, "checkout failed: "+err.Error()+"\n")
 		return
 	}
 
 	port, err := freePort()
 	if err != nil {
-		setEnvStatus(id, "failed", "no free port")
+		failEnv(id, "no free port")
 		return
 	}
 
@@ -350,7 +355,7 @@ func buildAndRunEnv(id int64, cfg *PreviewConfig) {
 		appendEnvLog(id, string(out))
 		if err != nil {
 			appendEnvLog(id, "\n!!! build step failed: "+err.Error()+"\n")
-			setEnvStatus(id, "failed", "build failed")
+			failEnv(id, "build failed")
 			return
 		}
 	}
@@ -358,10 +363,10 @@ func buildAndRunEnv(id int64, cfg *PreviewConfig) {
 	// A build with no server of its own: serve what it produced. This is the
 	// common case — most front-end frameworks compile to a directory of files.
 	if strings.TrimSpace(cfg.Run) == "" {
-		root, err := envStaticRoot(id, cfg)
+		root, err := envStaticRoot(id, cfg, detected)
 		if err != nil {
 			appendEnvLog(id, "\n!!! "+err.Error()+"\n")
-			setEnvStatus(id, "failed", err.Error())
+			failEnv(id, err.Error())
 			return
 		}
 		envMu.Lock()
@@ -384,7 +389,7 @@ func buildAndRunEnv(id int64, cfg *PreviewConfig) {
 	cmd.Stdout, cmd.Stderr = pw, pw
 	if err := cmd.Start(); err != nil {
 		appendEnvLog(id, "failed to start: "+err.Error()+"\n")
-		setEnvStatus(id, "failed", "start failed")
+		failEnv(id, "start failed")
 		return
 	}
 	db.Exec("UPDATE preview_envs SET port = ?, pid = ?, started_at = ? WHERE id = ?", port, cmd.Process.Pid, now(), id)
@@ -399,7 +404,7 @@ func buildAndRunEnv(id int64, cfg *PreviewConfig) {
 				msg = "process exited: " + err.Error()
 			}
 			appendEnvLog(id, "\n!!! "+msg+"\n")
-			setEnvStatus(id, "failed", msg)
+			failEnv(id, msg)
 		}
 		os.RemoveAll(envWorkspace(id))
 	}()
@@ -407,8 +412,8 @@ func buildAndRunEnv(id int64, cfg *PreviewConfig) {
 	// wait for the app to accept connections
 	if !waitForPort(port, 90*time.Second) {
 		appendEnvLog(id, "\n!!! app did not listen on PORT within 90s\n")
-		setEnvStatus(id, "failed", "app never became ready")
 		killEnvProcess(id)
+		failEnv(id, "app never became ready")
 		return
 	}
 	setEnvStatus(id, "running", "")
@@ -417,6 +422,17 @@ func buildAndRunEnv(id int64, cfg *PreviewConfig) {
 }
 
 type envLogWriter struct{ id int64 }
+
+// failEnv marks an environment failed and discards its workspace. The log
+// lives in the database, so nothing diagnosable is lost — and a failed
+// environment is never reaped, so a leftover node_modules would leak for good.
+func failEnv(id int64, msg string) {
+	setEnvStatus(id, "failed", msg)
+	os.RemoveAll(envWorkspace(id))
+	envMu.Lock()
+	delete(envStaticDirs, id)
+	envMu.Unlock()
+}
 
 func (w *envLogWriter) Write(p []byte) (int, error) {
 	appendEnvLog(w.id, string(p))
@@ -543,6 +559,19 @@ func resetPreviewEnvsOnBoot() {
 	if len(rs) > 0 {
 		log.Printf("preview-env: cleared %d environment(s) from a previous run", len(rs))
 	}
+	// Nothing is running immediately after a restart, so every workspace still
+	// on disk is an orphan — including those a failed build used to leave
+	// behind, which no reaper ever looked at.
+	root := filepath.Join(dataDir, "envs")
+	entries, _ := os.ReadDir(root)
+	for _, e := range entries {
+		if e.IsDir() {
+			os.RemoveAll(filepath.Join(root, e.Name()))
+		}
+	}
+	if len(entries) > 0 {
+		log.Printf("preview-env: removed %d leftover workspace(s)", len(entries))
+	}
 }
 
 // ---------- proxying ----------
@@ -607,9 +636,16 @@ func writeEnvStatusPage(w http.ResponseWriter, e *PreviewEnv, note string) {
 
 // ---------- serving a build that has no server ----------
 
+// staticOutputCandidates are the conventional places a build leaves a site.
+// Used only to rescue a *detected* configuration whose guess was wrong — a
+// committed one is a decision, and second-guessing it would hide the mistake.
+var staticOutputCandidates = []string{
+	"dist", "dist/client", "build", "build/client", "out", ".output/public", "public", "_site", "www",
+}
+
 // envStaticRoot locates the directory a build produced inside the
 // environment's workspace.
-func envStaticRoot(id int64, cfg *PreviewConfig) (string, error) {
+func envStaticRoot(id int64, cfg *PreviewConfig, detected bool) (string, error) {
 	rel := strings.TrimSpace(cfg.Static)
 	if rel == "" {
 		rel = "."
@@ -623,23 +659,67 @@ func envStaticRoot(id int64, cfg *PreviewConfig) (string, error) {
 		}
 	}
 	ws := envWorkspace(id)
-	root := filepath.Join(ws, filepath.FromSlash(rel))
-	if st, err := os.Stat(root); err != nil || !st.IsDir() {
-		return "", fmt.Errorf("the build produced no %s/ directory", rel)
+	declared := filepath.Join(ws, filepath.FromSlash(rel))
+	if st, err := os.Stat(declared); err == nil && st.IsDir() {
+		return descendToIndex(declared), nil
 	}
-	// Some tools nest their output one or two levels down (Angular writes
-	// dist/<project>/browser); follow a lone wrapper directory to the entry.
+	if !detected {
+		return "", errors.New(describeBuildOutput(ws, rel))
+	}
+	// The guess was wrong. Frameworks that share a dependency do not share an
+	// output directory (a TanStack Start app depends on vite but builds to
+	// .output), so look where builds actually put things.
+	for _, cand := range staticOutputCandidates {
+		if cand == rel {
+			continue
+		}
+		root := descendToIndex(filepath.Join(ws, filepath.FromSlash(cand)))
+		if fileExists(filepath.Join(root, "index.html")) {
+			log.Printf("preview-env %d: no %s/, serving %s/ instead", id, rel, cand)
+			return root, nil
+		}
+	}
+	return "", errors.New(describeBuildOutput(ws, rel))
+}
+
+// descendToIndex follows a lone wrapper directory down to the entry point,
+// for tools that nest their output (Angular writes dist/<project>/browser).
+func descendToIndex(root string) string {
 	for i := 0; i < 3; i++ {
 		if fileExists(filepath.Join(root, "index.html")) {
-			break
+			return root
 		}
 		entries, err := os.ReadDir(root)
 		if err != nil || len(entries) != 1 || !entries[0].IsDir() {
-			break
+			return root
 		}
 		root = filepath.Join(root, entries[0].Name())
 	}
-	return root, nil
+	return root
+}
+
+// describeBuildOutput turns "no dist/" into something actionable: what the
+// build actually left behind, and the likeliest reason it is not a site.
+func describeBuildOutput(ws, want string) string {
+	if fileExists(filepath.Join(ws, ".output", "server", "index.mjs")) {
+		return "the build produced a server bundle (.output/server/index.mjs), not a static site — set `run:` in .gitgit/preview.yml to start it"
+	}
+	var dirs []string
+	entries, _ := os.ReadDir(ws)
+	for _, e := range entries {
+		if e.IsDir() && e.Name() != "node_modules" && !strings.HasPrefix(e.Name(), ".git") {
+			dirs = append(dirs, e.Name()+"/")
+		}
+	}
+	if len(dirs) == 0 {
+		return fmt.Sprintf("the build produced no %s/ directory", want)
+	}
+	sort.Strings(dirs)
+	if len(dirs) > 8 {
+		dirs = append(dirs[:8], "…")
+	}
+	return fmt.Sprintf("no %s/ after the build — it produced: %s. Set `static:` or `run:` in .gitgit/preview.yml",
+		want, strings.Join(dirs, " "))
 }
 
 func fileExists(p string) bool {

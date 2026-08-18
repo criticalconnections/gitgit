@@ -202,11 +202,20 @@ A Preview Environment is an ephemeral, running instance of a branch.
 
 Most repositories have nothing servable in the tree: a Vite app's `index.html`
 points at `/src/main.tsx`, which no browser can load. GitGit reads the tree and
-works out how the branch builds — Vite, Next.js, Nuxt, SvelteKit, Astro, Remix,
-Create React App, Vue CLI, Angular, Gatsby, Eleventy, Docusaurus, VitePress,
-any `package.json` with a `start` script, Hugo, Jekyll, and Go — picking the
-package manager from the lockfile so a pnpm repository is not installed with
-`npm ci`.
+works out how the branch builds — Vite, Next.js, Nuxt, SvelteKit, Astro,
+TanStack Start / Nitro, Remix, Create React App, Vue CLI, Angular, Gatsby,
+Eleventy, Docusaurus, VitePress, any `package.json` with a `start` script,
+Hugo, Jekyll, and Go — picking the package manager from the lockfile so a pnpm
+repository is not installed with `npm ci`.
+
+A guess can still be wrong: frameworks share dependencies but not output
+directories, and a TanStack Start app depends on `vite` while building to
+`.output`. So when a *detected* build does not produce the directory it
+predicted, GitGit looks where builds actually put things (`dist`, `build`,
+`out`, `.output/public`, …) and serves what it finds. When there is nothing to
+serve it says what the build *did* produce, rather than only what was missing.
+A configuration you committed yourself is never second-guessed — it fails
+loudly instead.
 
 That guess is **only ever a proposal**. Building it runs the repository's own
 code on the server, and a committed `.gitgit/preview.yml` is consent from

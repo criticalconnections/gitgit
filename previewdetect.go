@@ -159,6 +159,21 @@ func detectNode(t previewTree) *DetectedPreview {
 		// Angular nests output under dist/<project>[/browser]; the static
 		// server descends into a lone wrapper directory to find index.html.
 		return site("Angular", dep("the Angular CLI"), "build", "dist")
+	case pkg.has("@tanstack/react-start", "@tanstack/solid-start", "@tanstack/start", "nitropack", "vinxi"):
+		// Nitro builds to .output, not dist — and it depends on vite, so this
+		// has to be decided before the generic Vite case below. Which command
+		// serves it depends on the preset the app was built with.
+		name := "Nitro"
+		if pkg.has("@tanstack/react-start", "@tanstack/solid-start", "@tanstack/start") {
+			name = "TanStack Start"
+		}
+		if pkg.has("wrangler") || t.has("wrangler.jsonc") || t.has("wrangler.toml") || t.has("wrangler.json") {
+			// The Cloudflare preset emits a worker module, which plain node
+			// cannot run; wrangler runs it locally against workerd.
+			return server(name+" (Cloudflare)", "a wrangler config alongside "+name, "build",
+				"npx -y wrangler dev --config .output/server/wrangler.json --port $PORT")
+		}
+		return server(name, dep(name), "build", "node .output/server/index.mjs")
 	case pkg.has("parcel"):
 		return site("Parcel", dep("parcel"), "build", "dist")
 	case pkg.has("vite"):

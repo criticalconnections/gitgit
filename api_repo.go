@@ -307,7 +307,7 @@ func apiPreviews(c *apiCtx, repo *Repo, rest []string) {
 			c.err(422, "branch no longer exists")
 			return
 		}
-		cfg, _ := previewPlan(repo.DiskPath(), sha)
+		cfg, det := previewPlan(repo.DiskPath(), sha)
 		if cfg == nil {
 			c.err(422, "nothing to build for this branch — add .gitgit/preview.yml to say how it builds and runs")
 			return
@@ -319,7 +319,7 @@ func apiPreviews(c *apiCtx, repo *Repo, rest []string) {
 			db.Exec("UPDATE previews SET env_ok = 1 WHERE id = ?", p.ID)
 			p.EnvOK = true
 		}
-		e := startPreviewEnv(repo, p, sha, cfg)
+		e := startPreviewEnv(repo, p, sha, cfg, det != nil)
 		if e == nil {
 			c.err(503, "no capacity for another preview environment right now")
 			return

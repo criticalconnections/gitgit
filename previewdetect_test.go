@@ -60,6 +60,21 @@ func TestDetectPreview(t *testing.T) {
 			run:  "node build",
 		},
 		{
+			name: "tanstack start beats its own vite dependency",
+			tree: fakeTree{"package.json": `{"dependencies":{"@tanstack/react-start":"1"},"devDependencies":{"vite":"^7"}}`},
+			want: "TanStack Start",
+			run:  "node .output/server/index.mjs",
+		},
+		{
+			name: "a wrangler config means the cloudflare preset, which node cannot run",
+			tree: fakeTree{
+				"package.json":   `{"dependencies":{"@tanstack/react-start":"1"},"devDependencies":{"vite":"^7","wrangler":"4"}}`,
+				"wrangler.jsonc": "{}",
+			},
+			want: "TanStack Start (Cloudflare)",
+			run:  "npx -y wrangler dev --config .output/server/wrangler.json --port $PORT",
+		},
+		{
 			name:   "create react app",
 			tree:   fakeTree{"package.json": `{"dependencies":{"react-scripts":"5"}}`},
 			want:   "Create React App",
