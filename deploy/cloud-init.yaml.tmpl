@@ -1,0 +1,89 @@
+#cloud-config
+# Provisions one GitGit customer instance on a bare Ubuntu box.
+#
+# Caddy terminates TLS with certificates it gets itself from Let's Encrypt over
+# DNS-01. That matters for two reasons: it issues the *depth-2* wildcard that
+# Preview Environments need (*.preview.HOSTNAME), which Cloudflare's Universal
+# SSL will not cover, and it puts no proxy in front of git — so pushes are not
+# capped at Cloudflare's 100 MB request body limit.
+
+package_update: true
+package_upgrade: true
+packages: [docker.io, docker-compose-v2, git, ufw, fail2ban]
+
+write_files:
+  - path: /etc/gitgit/gitgit.env
+    permissions: "0600"
+    content: |
+      GITGIT_BASE_URL=https://__HOSTNAME__
+      GITGIT_PREVIEW_DOMAIN=preview.__HOSTNAME__
+      GITGIT_OPEN_REGISTRATION=false
+      GITGIT_SSH_HOST=__HOSTNAME__
+      GITGIT_SECRET_KEY=__SECRET_KEY__
+      GITGIT_R2_ACCOUNT_ID=__R2_ACCOUNT__
+      GITGIT_R2_BUCKET=__R2_BUCKET__
+      GITGIT_R2_ACCESS_KEY_ID=__R2_KEY_ID__
+      GITGIT_R2_SECRET_ACCESS_KEY=__R2_SECRET__
+      GITGIT_R2_PREFIX=__CUSTOMER__
+
+  - path: /etc/gitgit/Caddyfile
+    content: |
+      {
+        email __ACME_EMAIL__
+      }
+      __HOSTNAME__, *.preview.__HOSTNAME__ {
+        tls {
+          dns cloudflare {env.CF_API_TOKEN}
+        }
+        # No request-body cap: a first push of a large repository is normal.
+        request_body {
+          max_size 0
+        }
+        reverse_proxy gitgit:3000
+      }
+
+  - path: /etc/gitgit/docker-compose.yml
+    content: |
+      services:
+        gitgit:
+          image: __IMAGE__
+          restart: always
+          env_file: /etc/gitgit/gitgit.env
+          command: ["-addr", ":3000", "-data", "/data", "-ssh-addr", ":22",
+                    "-backup-every", "24h", "-backup-keep", "3", "-backup-keep-offsite", "30"]
+          volumes:
+            - /srv/gitgit:/data
+          ports:
+            - "22:22"      # git over SSH, straight to the box
+        caddy:
+          image: caddy:2-alpine
+          restart: always
+          environment:
+            CF_API_TOKEN: __CF_TOKEN__
+          volumes:
+            - /etc/gitgit/Caddyfile:/etc/caddy/Caddyfile:ro
+            - caddy_data:/data
+          ports:
+            - "80:80"
+            - "443:443"
+      volumes:
+        caddy_data:
+
+runcmd:
+  # The host's own sshd moves aside so GitGit can own port 22 and clone URLs
+  # need no port. Administration goes through 2299.
+  - sed -i 's/^#\?Port .*/Port 2299/' /etc/ssh/sshd_config
+  - systemctl restart ssh || systemctl restart sshd
+  - ufw allow 2299/tcp && ufw allow 22/tcp && ufw allow 80/tcp && ufw allow 443/tcp
+  - ufw --force enable
+  - mkdir -p /srv/gitgit
+  - systemctl enable --now docker
+  # Caddy's DNS-01 needs the cloudflare module, which the stock image lacks.
+  - docker build -t caddy-cf:2 -<<'EOF'
+    FROM caddy:2-builder AS builder
+    RUN xcaddy build --with github.com/caddy-dns/cloudflare
+    FROM caddy:2-alpine
+    COPY --from=builder /usr/bin/caddy /usr/bin/caddy
+    EOF
+  - sed -i 's|image: caddy:2-alpine|image: caddy-cf:2|' /etc/gitgit/docker-compose.yml
+  - docker compose -f /etc/gitgit/docker-compose.yml up -d

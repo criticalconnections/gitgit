@@ -26,6 +26,8 @@ var (
 	backupKeep      int
 	r2Keep          int
 	startTme        = time.Now()
+	// version is stamped at build time with -ldflags "-X main.version=…"
+	version = "dev"
 )
 
 func envOr(key, def string) string {

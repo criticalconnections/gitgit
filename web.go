@@ -85,6 +85,11 @@ func appSecurityHeaders(next http.Handler) http.Handler {
 func buildHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/", handleAPI)
+	// Unauthenticated on purpose: a load balancer and a monitor have no
+	// credentials, and neither endpoint reveals anything a visitor could not
+	// already count from the UI.
+	mux.HandleFunc("GET /healthz", handleHealthz)
+	mux.HandleFunc("GET /metrics", handleMetrics)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// Preview Environments own their entire subdomain, so this check comes
