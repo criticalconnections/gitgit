@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
-import { Archive, Copy, KeyRound, Loader2, Plus, Trash2 } from "lucide-react"
+import { Archive, Cloud, CloudOff, Copy, KeyRound, Loader2, Plus, Trash2 } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
@@ -429,6 +429,12 @@ function SSHKeysCard() {
 function BackupsCard() {
   const [backups, setBackups] = useState<BackupFile[] | null>(null)
   const [dir, setDir] = useState("")
+  const [offsite, setOffsite] = useState<{
+    configured: boolean
+    bucket?: string
+    objects?: string[]
+    error?: string
+  }>({ configured: false })
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
@@ -436,6 +442,7 @@ function BackupsCard() {
       const res = await api.listBackups()
       setBackups(res.backups)
       setDir(res.directory)
+      setOffsite(res.offsite ?? { configured: false })
     } catch {
       setBackups([])
     }
@@ -457,6 +464,36 @@ function BackupsCard() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Offsite status first: a backup on the same disk as the data it
+            protects is the thing most likely to be silently useless. */}
+        {offsite.configured ? (
+          <div className="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2.5 text-xs leading-relaxed">
+            <Cloud className="mt-0.5 size-3.5 shrink-0 text-primary" />
+            <span className="text-muted-foreground">
+              <b className="text-foreground">Copied offsite to R2</b> — bucket{" "}
+              <code className="font-mono">{offsite.bucket}</code>
+              {offsite.error ? (
+                <span className="text-destructive"> · last listing failed: {offsite.error}</span>
+              ) : (
+                <> · {offsite.objects?.length ?? 0} archive(s) stored there</>
+              )}
+            </span>
+          </div>
+        ) : (
+          <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-xs leading-relaxed">
+            <CloudOff className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+            <span className="text-muted-foreground">
+              <b className="text-foreground">Local only.</b> These archives live on the same disk as
+              the data they protect, so one failed disk loses both. Set{" "}
+              <code className="font-mono">GITGIT_R2_ACCOUNT_ID</code>,{" "}
+              <code className="font-mono">GITGIT_R2_BUCKET</code>,{" "}
+              <code className="font-mono">GITGIT_R2_ACCESS_KEY_ID</code> and{" "}
+              <code className="font-mono">GITGIT_R2_SECRET_ACCESS_KEY</code> to copy every backup to
+              Cloudflare R2.
+            </span>
+          </div>
+        )}
+
         <div className="rounded-lg border border-tangerine/40 bg-tangerine/5 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
           <b className="text-foreground">The secret key is not in the archive.</b> Bundling it with
           the data it decrypts would protect nothing. Copy{" "}
@@ -470,7 +507,8 @@ function BackupsCard() {
             setBusy(true)
             try {
               const r = await api.createBackup()
-              toast.success(`Wrote ${r.name}`)
+              if (r.warning) toast.warning(r.warning)
+              else toast.success(`Wrote ${r.name}${offsite.configured ? " and copied it to R2" : ""}`)
               await load()
             } catch (e) {
               toast.error(e instanceof Error ? e.message : "failed")
@@ -492,8 +530,20 @@ function BackupsCard() {
                 <Archive className="size-3.5 shrink-0 text-muted-foreground" />
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-mono text-xs">{b.name}</div>
-                  <div className="text-[11px] text-muted-foreground">
-                    {(b.size / 1048576).toFixed(1)} MB · {timeAgo(b.created_at)}
+                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <span>
+                      {(b.size / 1048576).toFixed(1)} MB · {timeAgo(b.created_at)}
+                    </span>
+                    {offsite.configured &&
+                      (offsite.objects?.some((o) => o.endsWith(b.name)) ? (
+                        <span className="inline-flex items-center gap-1 text-primary">
+                          <Cloud className="size-3" /> offsite
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-destructive">
+                          <CloudOff className="size-3" /> not offsite
+                        </span>
+                      ))}
                   </div>
                 </div>
                 <Button asChild variant="ghost" size="sm" className="h-8 shrink-0 px-2 text-xs">

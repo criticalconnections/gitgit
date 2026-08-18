@@ -24,6 +24,7 @@ var (
 	sshHostName     string // hostname shown in SSH clone URLs
 	backupEvery     time.Duration
 	backupKeep      int
+	r2Keep          int
 	startTme        = time.Now()
 )
 
@@ -51,7 +52,9 @@ func main() {
 		"hostname shown in SSH clone URLs (default: the request's host)")
 	flag.DurationVar(&backupEvery, "backup-every", 0,
 		"take a backup on this interval, e.g. 24h (0 disables scheduled backups)")
-	flag.IntVar(&backupKeep, "backup-keep", backupKeepDefault, "number of scheduled backups to retain")
+	flag.IntVar(&backupKeep, "backup-keep", backupKeepDefault, "number of scheduled backups to retain locally")
+	flag.IntVar(&r2Keep, "backup-keep-offsite", 30,
+		"number of backups to retain in Cloudflare R2 (offsite copies usually want a longer tail than local ones)")
 	flag.BoolVar(&devMode, "dev", false, "dev mode: serve templates/static from disk instead of the embedded copies")
 	flag.Parse()
 

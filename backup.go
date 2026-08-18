@@ -106,6 +106,12 @@ func createBackup() (string, error) {
 		return "", err
 	}
 	log.Printf("backup: wrote %s", name)
+	// Offsite immediately: a backup that only exists on the disk it protects
+	// is not one. The local archive is kept either way, so a failed upload
+	// costs the offsite copy, never the backup itself.
+	if err := offsiteBackup(path, name); err != nil {
+		return name, fmt.Errorf("backup written locally, but the R2 upload failed: %w", err)
+	}
 	return name, nil
 }
 
@@ -250,11 +256,33 @@ func handleAPIBackups(c *apiCtx, rest []string) {
 	}
 	switch {
 	case len(rest) == 0 && c.r.Method == http.MethodGet:
-		c.out(200, map[string]any{"backups": listBackups(), "directory": backupDir()})
+		body := map[string]any{"backups": listBackups(), "directory": backupDir()}
+		if cfg, ok := r2FromEnv(); ok {
+			body["offsite"] = map[string]any{"bucket": cfg.Bucket, "configured": true}
+			if objects, err := cfg.listBackups(); err == nil {
+				names := make([]string, 0, len(objects))
+				for _, o := range objects {
+					names = append(names, o.Key)
+				}
+				body["offsite"].(map[string]any)["objects"] = names
+			} else {
+				body["offsite"].(map[string]any)["error"] = err.Error()
+			}
+		} else {
+			body["offsite"] = map[string]any{"configured": false}
+		}
+		c.out(200, body)
 
 	case len(rest) == 0 && c.r.Method == http.MethodPost:
 		name, err := createBackup()
 		if err != nil {
+			// A name with an error means the archive exists but did not reach
+			// R2 — say both, rather than reporting a total failure.
+			if name != "" {
+				pruneBackups(backupKeep)
+				c.out(207, map[string]any{"name": name, "warning": err.Error()})
+				return
+			}
 			c.err(500, err.Error())
 			return
 		}

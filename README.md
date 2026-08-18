@@ -134,6 +134,10 @@ avoid breaking `git clone`.
 | `-ci-workers` | — | `2` | concurrent CI runners |
 | `-ssh-addr` | `GITGIT_SSH_ADDR` | `:2222` | git-over-SSH listener; empty to disable |
 | `-ssh-host` | `GITGIT_SSH_HOST` | derived | hostname shown in SSH clone URLs |
+| `-backup-every` | — | `0` | take a backup on this interval, e.g. `24h` |
+| `-backup-keep` | — | `7` | backups to retain locally |
+| `-backup-keep-offsite` | — | `30` | backups to retain in R2 |
+| — | `GITGIT_R2_*` | — | `ACCOUNT_ID`, `BUCKET`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`, optional `PREFIX` / `ENDPOINT` |
 
 ## Git over SSH
 
@@ -427,6 +431,32 @@ and you would not find out until the day you needed it.
 mkdir -p /srv/gitgit-data && tar xzf gitgit-20260818-034812.tar.gz -C /srv/gitgit-data
 ./gitgit -data /srv/gitgit-data
 ```
+
+### Offsite copies (Cloudflare R2)
+
+An archive on the same disk as the data it protects is not a backup — one dead
+disk takes both. Point GitGit at an R2 bucket and every backup is copied there
+as soon as it is written:
+
+```bash
+export GITGIT_R2_ACCOUNT_ID=<your cloudflare account id>
+export GITGIT_R2_BUCKET=gitgit-backups
+export GITGIT_R2_ACCESS_KEY_ID=<r2 access key>
+export GITGIT_R2_SECRET_ACCESS_KEY=<r2 secret>
+./gitgit -backup-every 24h -backup-keep 7 -backup-keep-offsite 30
+```
+
+Create the bucket and an R2 API token (Object Read & Write) in the Cloudflare
+dashboard under R2. Offsite retention is separate from local, because the whole
+point of offsite is outliving the machine, so it usually wants a longer tail.
+
+The Settings page shows whether each archive actually reached R2, and a failed
+upload is reported rather than swallowed — a backup you believe is offsite and
+is not is worse than knowing you have none. The local copy is always kept, so a
+failed upload never costs you the backup itself.
+
+R2 is S3-compatible, so `GITGIT_R2_ENDPOINT` points this at MinIO, Backblaze B2
+or S3 instead.
 
 **The secret key is deliberately not in the archive.** An archive containing
 both the encrypted secrets and the key that opens them protects nothing. Copy

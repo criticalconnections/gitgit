@@ -322,18 +322,33 @@ func maybeStartSSH(addr string) {
 	sshOnce.Do(func() { go startSSHServer(addr) })
 }
 
-// sshCloneURL builds the git@host:owner/repo.git address, or "" when SSH is
-// switched off. The port is only shown when it is not 22, since scp-style
-// syntax cannot express a port and needs ssh:// form instead.
+// sshCloneURL builds the address to clone over SSH, or "" when there is no
+// address worth offering.
+//
+// Deriving the hostname from the request is wrong for any deployment behind a
+// proxy that only forwards HTTP — a Cloudflare tunnel carries 80/443 and
+// nothing else, so git@yourdomain:2222 would be advertised, accepted by the
+// UI, and then fail to connect from everywhere except the server itself.
+// A public SSH endpoint is something the operator has to arrange, so it is
+// only advertised when they name it with -ssh-host. The request host is used
+// only when it is already local, where the listener genuinely is reachable.
 func sshCloneURL(r *http.Request, repo *Repo) string {
 	if strings.TrimSpace(sshAddr) == "" {
 		return ""
 	}
-	host := sshHostName
-	if host == "" {
-		host, _, _ = strings.Cut(r.Host, ":")
+	// -ssh-host is what clients should actually type, so it carries its own
+	// port or deliberately carries none: reached through a tunnel, the client
+	// never dials the listener's port and a ":2222" in the URL is wrong.
+	if host := strings.TrimSpace(sshHostName); host != "" {
+		if name, port, err := net.SplitHostPort(host); err == nil && port != "" && port != "22" {
+			return "ssh://git@" + name + ":" + port + "/" + repo.FullName() + ".git"
+		}
+		return "git@" + strings.TrimSuffix(host, ":22") + ":" + repo.FullName() + ".git"
 	}
-	if host == "" {
+
+	// Otherwise only offer an address the listener is genuinely reachable at.
+	host, _, _ := strings.Cut(r.Host, ":")
+	if host == "" || !isLocalHostname(host) {
 		return ""
 	}
 	_, port, _ := net.SplitHostPort(sshAddr)
@@ -341,4 +356,14 @@ func sshCloneURL(r *http.Request, repo *Repo) string {
 		return "git@" + host + ":" + repo.FullName() + ".git"
 	}
 	return "ssh://git@" + host + ":" + port + "/" + repo.FullName() + ".git"
+}
+
+// isLocalHostname reports whether the listener is reachable at this name
+// without any proxy in between: loopback, a private LAN address, or .local.
+func isLocalHostname(host string) bool {
+	if host == "localhost" || strings.HasSuffix(host, ".local") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast())
 }

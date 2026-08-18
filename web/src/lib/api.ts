@@ -573,8 +573,13 @@ export const api = {
   changePassword: (current: string, password: string) =>
     post<{ ok: boolean }>("/api/v1/user/password", { current, password }),
   // backups (site admin only)
-  listBackups: () => get<{ backups: BackupFile[]; directory: string }>("/api/v1/backups"),
-  createBackup: () => post<{ name: string }>("/api/v1/backups"),
+  listBackups: () =>
+    get<{
+      backups: BackupFile[]
+      directory: string
+      offsite: { configured: boolean; bucket?: string; objects?: string[]; error?: string }
+    }>("/api/v1/backups"),
+  createBackup: () => post<{ name: string; warning?: string }>("/api/v1/backups"),
   deleteBackup: (name: string) => del<{ ok: boolean }>(`/api/v1/backups/${enc(name)}`),
   backupDownloadURL: (name: string) => `/api/v1/backups/${enc(name)}/download`,
 
