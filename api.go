@@ -96,6 +96,8 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		handleAPIUserProfile(c, parts[1])
 	case parts[0] == "orgs":
 		handleAPIOrgs(c, parts[1:])
+	case parts[0] == "notifications":
+		handleAPINotifications(c, parts[1:])
 	case parts[0] == "repos" && len(parts) == 1:
 		handleAPIRepoIndex(c)
 	case parts[0] == "import":

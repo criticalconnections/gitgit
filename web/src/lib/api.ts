@@ -405,6 +405,20 @@ export interface OrgMember extends User {
   role: string
 }
 
+export interface Notification {
+  id: number
+  repo: string
+  subject: "issue" | "pull"
+  number: number
+  title: string
+  /** why you are being told: mention, author, review, ci, comment, repo */
+  reason: string
+  actor: string
+  read: boolean
+  updated_at: number
+  url: string
+}
+
 export interface ImportJob {
   id: number
   source: string
@@ -501,6 +515,13 @@ export const api = {
   // users + repos
   userProfile: (username: string) => get<UserProfile>(`/api/v1/users/${enc(username)}`),
   listRepos: (q?: string) => get<Repo[]>(`/api/v1/repos${q ? `?q=${enc(q)}` : ""}`),
+
+  // notifications
+  notifications: (all?: boolean) =>
+    get<{ notifications: Notification[]; unread: number }>(`/api/v1/notifications${all ? "?all=1" : ""}`),
+  unreadCount: () => get<{ unread: number }>("/api/v1/notifications/count"),
+  markNotificationRead: (id: number) => post<{ unread: number }>(`/api/v1/notifications/${id}/read`),
+  markAllNotificationsRead: () => post<{ unread: number }>("/api/v1/notifications/read"),
 
   // organizations
   myOrgs: () => get<Org[]>("/api/v1/orgs"),

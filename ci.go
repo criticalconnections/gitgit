@@ -239,6 +239,16 @@ func executeRun(runID int64) {
 		"ref":        run.Ref,
 		"status":     overall,
 	})
+
+	// Only failures are worth interrupting someone for, and only on a branch
+	// with an open pull request — a red build on a scratch branch is the
+	// author's business, not an inbox item.
+	if overall == "failure" {
+		for _, pr := range openPullsWithHead(repo.ID, strings.TrimPrefix(run.Ref, "refs/heads/")) {
+			notify(pr.AuthorID, nil, repo, "pull", pr.Number,
+				fmt.Sprintf("CI failed on %s", pr.Title), reasonCI)
+		}
+	}
 }
 
 func markRunError(runID int64, msg string) {

@@ -1,5 +1,5 @@
-import { Link, Outlet, useNavigate } from "react-router-dom"
-import { Building2, CloudDownload, Compass, LogOut, Moon, Plus, Settings, Sun, User as UserIcon } from "lucide-react"
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom"
+import { Bell, Building2, CloudDownload, Compass, LogOut, Moon, Plus, Settings, Sun, User as UserIcon } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import {
@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Logo } from "@/components/logo"
 import { UserAvatar } from "@/components/shared"
+import { api } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
 import { Toaster } from "@/components/ui/sonner"
 
@@ -26,6 +27,44 @@ export function useTheme() {
 
 // AppShell wraps all product pages: sticky glass topbar + content outlet.
 // The marketing landing page renders outside of it.
+// NotificationBell polls for the unread count. Polling rather than a socket:
+// one small query a minute costs far less than holding a connection open for
+// something nobody needs to hear about within the second.
+function NotificationBell() {
+  const [unread, setUnread] = useState(0)
+  const location = useLocation()
+
+  useEffect(() => {
+    let cancelled = false
+    const check = () =>
+      api
+        .unreadCount()
+        .then((r) => !cancelled && setUnread(r.unread))
+        .catch(() => {})
+    check()
+    const t = setInterval(check, 60_000)
+    return () => {
+      cancelled = true
+      clearInterval(t)
+    }
+    // re-checked on navigation too, so reading the inbox clears the badge
+  }, [location.pathname])
+
+  return (
+    <Button asChild variant="ghost" size="icon" className="relative size-8 text-muted-foreground">
+      <Link to="/notifications" title={unread ? `${unread} unread notifications` : "Notifications"}>
+        <Bell className="size-4" />
+        {unread > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 grid min-w-4 place-items-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground tabular-nums">
+            {unread > 9 ? "9+" : unread}
+          </span>
+        )}
+        <span className="sr-only">Notifications</span>
+      </Link>
+    </Button>
+  )
+}
+
 export function AppShell() {
   const { user, signOut } = useAuth()
   const { dark, toggle } = useTheme()
@@ -52,6 +91,7 @@ export function AppShell() {
             </Button>
             {user ? (
               <>
+                <NotificationBell />
                 <Button asChild size="sm" variant="outline">
                   <Link to="/new">
                     <Plus className="size-4" />

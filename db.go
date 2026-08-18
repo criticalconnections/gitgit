@@ -242,6 +242,24 @@ CREATE TABLE IF NOT EXISTS preview_envs (
 );
 -- Values injected into Preview Environments, encrypted with a key held
 -- outside this database (see secrets.go).
+-- One row per (person, thread): repeat activity refreshes it rather than
+-- stacking up, so an inbox stays readable.
+CREATE TABLE IF NOT EXISTS notifications (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER NOT NULL,
+  repo_id    INTEGER NOT NULL,
+  subject    TEXT NOT NULL,
+  number     INTEGER NOT NULL,
+  title      TEXT NOT NULL DEFAULT '',
+  reason      TEXT NOT NULL DEFAULT '',
+  reason_rank INTEGER NOT NULL DEFAULT 9,
+  actor_id   INTEGER NOT NULL DEFAULT 0,
+  read       INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL,
+  UNIQUE (user_id, repo_id, subject, number)
+);
+CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id, read, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS repo_secrets (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   repo_id    INTEGER NOT NULL,
@@ -279,6 +297,7 @@ func openDB(path string) error {
 	ensureColumn("previews", "env_ok", "INTEGER NOT NULL DEFAULT 0")
 	ensureColumn("previews", "env_paused", "INTEGER NOT NULL DEFAULT 0")
 	ensureColumn("users", "is_org", "INTEGER NOT NULL DEFAULT 0")
+	ensureColumn("notifications", "reason_rank", "INTEGER NOT NULL DEFAULT 9")
 	for _, c := range []struct{ col, ddl string }{
 		{"step", "TEXT NOT NULL DEFAULT ''"},
 		{"step_n", "INTEGER NOT NULL DEFAULT 0"},

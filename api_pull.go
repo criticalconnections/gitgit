@@ -82,6 +82,10 @@ func apiCreatePull(c *apiCtx, repo *Repo) {
 		enqueueCI(repo, sha, req.Head, "pull_request")
 	}
 	fireWebhooks(repo, "pull_request", prPayload(repo, pr, "opened"))
+	notifyRepoAdmins(c.u, repo, "pull", pr.Number, pr.Title)
+	for _, u := range mentionedUsers(pr.Body) {
+		notify(u.ID, c.u, repo, "pull", pr.Number, pr.Title, reasonMention)
+	}
 	c.out(201, pullJSON(repo, pr))
 }
 
@@ -226,6 +230,7 @@ func apiPullActions(c *apiCtx, repo *Repo, pr *Pull, rest []string) {
 			c.err(500, err.Error())
 			return
 		}
+		notifyThread(c.u, repo, "pull", pr.Number, pr.AuthorID, pr.Title, req.Body, reasonComment)
 		touchPull(pr.ID)
 		c.out(201, commentJSON(cm))
 	case "review":
@@ -252,6 +257,7 @@ func apiPullActions(c *apiCtx, repo *Repo, pr *Pull, rest []string) {
 		addReview(pr.ID, c.u.ID, req.Verdict, req.Body, sha)
 		touchPull(pr.ID)
 		fireWebhooks(repo, "pull_request", prPayload(repo, pr, "reviewed"))
+		notifyThread(c.u, repo, "pull", pr.Number, pr.AuthorID, pr.Title, req.Body, reasonReview)
 		c.out(201, map[string]bool{"ok": true})
 	case "review-comment":
 		var req struct {
@@ -424,6 +430,7 @@ func apiMergePull(c *apiCtx, repo *Repo, pr *Pull) {
 	enqueueCI(repo, newTip, pr.BaseBranch, "push")
 	stopEnvsForRef(repo.ID, pr.HeadBranch) // the branch is merged; its environment is done
 	fireWebhooks(repo, "pull_request", prPayload(repo, pr, "merged"))
+	notifyThread(c.u, repo, "pull", pr.Number, pr.AuthorID, pr.Title, "", reasonComment)
 	c.out(200, pullJSON(repo, pr))
 }
 
@@ -560,6 +567,10 @@ func handleAPIIssues(c *apiCtx, repo *Repo, rest []string) {
 		fireWebhooks(repo, "issues", map[string]any{
 			"repository": repo.FullName(), "action": "opened", "number": is.Number, "title": is.Title,
 		})
+		notifyRepoAdmins(c.u, repo, "issue", is.Number, is.Title)
+		for _, u := range mentionedUsers(is.Body) {
+			notify(u.ID, c.u, repo, "issue", is.Number, is.Title, reasonMention)
+		}
 		c.out(201, issueJSON(is))
 	case len(rest) >= 1:
 		num, err := strconv.ParseInt(rest[0], 10, 64)
@@ -635,6 +646,7 @@ func apiIssueActions(c *apiCtx, repo *Repo, is *Issue, rest []string) {
 				c.err(500, err.Error())
 				return
 			}
+			notifyThread(c.u, repo, "issue", is.Number, is.AuthorID, is.Title, req.Body, reasonComment)
 			saveIssue(is)
 			c.out(201, commentJSON(cm))
 		case "close":
@@ -646,6 +658,7 @@ func apiIssueActions(c *apiCtx, repo *Repo, is *Issue, rest []string) {
 				fireWebhooks(repo, "issues", map[string]any{
 					"repository": repo.FullName(), "action": "closed", "number": is.Number, "title": is.Title,
 				})
+				notifyThread(c.u, repo, "issue", is.Number, is.AuthorID, is.Title, "", reasonComment)
 			}
 			c.out(200, issueJSON(is))
 		case "reopen":
