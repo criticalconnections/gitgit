@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -203,7 +204,8 @@ CREATE TABLE IF NOT EXISTS previews (
   token      TEXT NOT NULL UNIQUE,
   created_by INTEGER NOT NULL,
   created_at INTEGER NOT NULL,
-  expires_at INTEGER NOT NULL
+  expires_at INTEGER NOT NULL,
+  env_ok     INTEGER NOT NULL DEFAULT 0
 );
 
 -- A running instance of a branch, proxied at its own subdomain.
@@ -242,8 +244,25 @@ func openDB(path string) error {
 	// More than one connection is required because some code paths query
 	// while iterating another statement's rows.
 	db.SetMaxOpenConns(8)
-	_, err = db.Exec(schema)
-	return err
+	if _, err = db.Exec(schema); err != nil {
+		return err
+	}
+	// CREATE TABLE IF NOT EXISTS leaves an existing table alone, so columns
+	// added after a release have to be applied to it explicitly.
+	ensureColumn("previews", "env_ok", "INTEGER NOT NULL DEFAULT 0")
+	return nil
+}
+
+// ensureColumn adds a column to an existing table; SQLite has no
+// ADD COLUMN IF NOT EXISTS, so check the table's shape first.
+func ensureColumn(table, col, ddl string) {
+	var n int
+	if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", table, col).Scan(&n); err != nil || n > 0 {
+		return
+	}
+	if _, err := db.Exec("ALTER TABLE " + table + " ADD COLUMN " + col + " " + ddl); err != nil {
+		log.Printf("db: adding %s.%s: %v", table, col, err)
+	}
 }
 
 func now() int64 { return time.Now().Unix() }

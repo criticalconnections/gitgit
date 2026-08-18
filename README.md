@@ -31,10 +31,11 @@ for state, bare repositories on disk. No external services.
   on your phone. Declare how the app builds and runs in `.gitgit/preview.yml`
   and GitGit clones the branch, builds it, starts the process, and proxies
   `https://{id}.preview.example.com` to it. Environments follow the branch,
-  rebuild on push, and are torn down on merge, close, idle, or TTL. Without a
-  `run:` command a preview stays static — the branch's files served straight
-  from the tree, no build required. See
-  [Preview Environments](#preview-environments) below.
+  rebuild on push, and are torn down on merge, close, idle, or TTL. **No
+  configuration needed** for the common cases: GitGit recognises Vite, Next.js,
+  Astro, SvelteKit, Nuxt, Remix, Create React App, Hugo, Jekyll, Go and more
+  from the tree, and proposes the build — a maintainer approves it with one
+  click. See [Preview Environments](#preview-environments) below.
 - **Import** — mirror a repository from GitHub with every branch, tag, and
   optionally its issues and labels (private repos via a token; GitHub
   Enterprise and other git hosts work too), or upload a `.zip` from your
@@ -195,8 +196,33 @@ repository may be left partially mirrored — delete it and re-import).
 
 ## Preview Environments
 
-A Preview Environment is an ephemeral, running instance of a branch. Add
-`.gitgit/preview.yml` to the repository:
+A Preview Environment is an ephemeral, running instance of a branch.
+
+### Branches that need building
+
+Most repositories have nothing servable in the tree: a Vite app's `index.html`
+points at `/src/main.tsx`, which no browser can load. GitGit reads the tree and
+works out how the branch builds — Vite, Next.js, Nuxt, SvelteKit, Astro, Remix,
+Create React App, Vue CLI, Angular, Gatsby, Eleventy, Docusaurus, VitePress,
+any `package.json` with a `start` script, Hugo, Jekyll, and Go — picking the
+package manager from the lockfile so a pnpm repository is not installed with
+`npm ci`.
+
+That guess is **only ever a proposal**. Building it runs the repository's own
+code on the server, and a committed `.gitgit/preview.yml` is consent from
+somebody with push access, while a guess is not. So nothing is built until
+someone with write access presses **Build this branch** in the preview dialog;
+until then the preview shows what was detected and the exact YAML to commit.
+Approval is remembered for that branch, so later pushes rebuild on their own.
+
+A branch that needs a build and has not been approved serves an explanation,
+not its sources — a half-rendered page reads as GitGit's fault rather than a
+missing build.
+
+### Declaring it yourself
+
+Commit `.gitgit/preview.yml` to pin the configuration (and to correct a wrong
+guess):
 
 ```yaml
 build:                    # optional, runs once before `run`
@@ -211,8 +237,15 @@ env:
   NODE_ENV: production
 ```
 
-Your process is started with **`$PORT`** set — bind to it, on any interface —
-plus `GITGIT_REPO`, `GITGIT_REF`, `GITGIT_SHA`, and `GITGIT_PREVIEW_URL`.
+With no `run:` command, the build's output directory is served directly — most
+front-end frameworks compile to a directory of files and need no server of
+their own. GitGit follows a lone wrapper directory down to the `index.html`
+(Angular's `dist/<project>/browser`), falls back to the entry point for
+extensionless paths so client-side routers work, and still 404s a missing
+asset rather than handing back HTML.
+
+With a `run:` command, your process is started with **`$PORT`** set — bind to
+it, on any interface — plus `GITGIT_REPO`, `GITGIT_REF`, `GITGIT_SHA`, and `GITGIT_PREVIEW_URL`.
 GitGit waits for the port to accept connections before routing traffic, and
 serves a holding page (which auto-refreshes) until then.
 

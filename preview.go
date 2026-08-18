@@ -29,6 +29,10 @@ type Preview struct {
 	CreatedBy int64
 	CreatedAt int64
 	ExpiresAt int64
+	// EnvOK records that a maintainer approved building this branch from a
+	// detected configuration; a committed .gitgit/preview.yml needs no such
+	// approval, since only a pusher can add one.
+	EnvOK bool
 }
 
 func prunePreviews() {
@@ -59,13 +63,13 @@ func createPreview(repoID, userID int64, ref string) (*Preview, error) {
 
 func scanPreview(row interface{ Scan(...any) error }) *Preview {
 	p := &Preview{}
-	if row.Scan(&p.ID, &p.RepoID, &p.Ref, &p.Token, &p.CreatedBy, &p.CreatedAt, &p.ExpiresAt) != nil {
+	if row.Scan(&p.ID, &p.RepoID, &p.Ref, &p.Token, &p.CreatedBy, &p.CreatedAt, &p.ExpiresAt, &p.EnvOK) != nil {
 		return nil
 	}
 	return p
 }
 
-const previewCols = "id, repo_id, ref, token, created_by, created_at, expires_at"
+const previewCols = "id, repo_id, ref, token, created_by, created_at, expires_at, env_ok"
 
 func previewByRepoRef(repoID int64, ref string) *Preview {
 	return scanPreview(db.QueryRow("SELECT "+previewCols+" FROM previews WHERE repo_id = ? AND ref = ? AND expires_at > ?", repoID, ref, now()))
@@ -168,11 +172,19 @@ func servePreviewHost(w http.ResponseWriter, r *http.Request, token string) {
 	// A running environment takes over the whole host, including non-GET
 	// methods, so real applications (forms, APIs) work.
 	if e := ensurePreviewEnv(repo, p, sha); e != nil {
-		if e.Status == "running" && e.Port > 0 {
-			proxyToEnv(w, r, e)
-			return
+		switch {
+		case e.Status == "running" && e.Port > 0:
+			proxyToEnv(w, r, e) // a server of its own
+		case e.Status == "running":
+			serveEnvStatic(w, r, e) // a build with no server
+		default:
+			writeEnvStatusPage(w, e, "")
 		}
-		writeEnvStatusPage(w, e, "")
+		return
+	}
+	// Nothing is running. If the branch needs a build, say so.
+	if cfg, det := previewPlan(repo.DiskPath(), sha); cfg != nil {
+		writeNeedsBuildPage(w, repo, p, det, false)
 		return
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -229,11 +241,13 @@ func servePreview(w http.ResponseWriter, r *http.Request, token, reqPath string)
 	// If this branch defines a runnable environment, the path form cannot
 	// serve it safely (absolute asset paths would escape the prefix); point
 	// the visitor at the environment's own origin instead.
-	if previewDomain != "" {
-		if cfg := loadPreviewConfig(repo.DiskPath(), sha); cfg != nil && strings.TrimSpace(cfg.Run) != "" {
+	if cfg, det := previewPlan(repo.DiskPath(), sha); cfg != nil {
+		if previewDomain != "" {
 			http.Redirect(w, r, previewOrigin(p), http.StatusTemporaryRedirect)
 			return
 		}
+		writeNeedsBuildPage(w, repo, p, det, true)
+		return
 	}
 	serveStaticPreview(w, r, repo, p, sha, reqPath, true)
 }
@@ -329,10 +343,7 @@ func writePreviewListing(w http.ResponseWriter, repo *Repo, p *Preview, dir, sha
 		return
 	}
 	var b strings.Builder
-	b.WriteString("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>")
-	b.WriteString("<title>Preview · " + html.EscapeString(repo.FullName()) + "</title>")
-	b.WriteString("<body style='font-family:system-ui;max-width:640px;margin:2rem auto;padding:0 1rem;color:#232b36'>")
-	b.WriteString("<h2 style='font-weight:600'>" + html.EscapeString(repo.FullName()) + " <span style='color:#888'>@ " + html.EscapeString(p.Ref) + "</span></h2>")
+	previewPageHead(&b, repo, p)
 	b.WriteString("<p style='color:#888;font-size:14px'>No <code>index.html</code> here — directory listing (" + html.EscapeString(sha[:10]) + ")</p><ul style='line-height:1.9;list-style:none;padding:0'>")
 	if treePath != "" {
 		b.WriteString("<li><a href='../'>..</a></li>")
@@ -392,4 +403,46 @@ func previewHosts(r *http.Request) []string {
 		add(scheme + "://" + h)
 	}
 	return hosts
+}
+
+// previewPageHead opens the plain, unstyled shell GitGit serves inside a
+// preview when there is no application to show.
+func previewPageHead(b *strings.Builder, repo *Repo, p *Preview) {
+	b.WriteString("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>")
+	b.WriteString("<title>Preview · " + html.EscapeString(repo.FullName()) + "</title>")
+	b.WriteString("<body style='font-family:system-ui;max-width:640px;margin:2rem auto;padding:0 1rem;color:#232b36'>")
+	b.WriteString("<h2 style='font-weight:600'>" + html.EscapeString(repo.FullName()) +
+		" <span style='color:#888'>@ " + html.EscapeString(p.Ref) + "</span></h2>")
+}
+
+// writeNeedsBuildPage stands in for a branch that cannot be served as it
+// stands. Serving the tree instead would render a broken page — a Vite
+// index.html pointing at /src/main.tsx that 404s — which reads as GitGit's
+// fault rather than a missing build.
+func writeNeedsBuildPage(w http.ResponseWriter, repo *Repo, p *Preview, det *DetectedPreview, sandbox bool) {
+	var b strings.Builder
+	previewPageHead(&b, repo, p)
+	writeNeedsBuildNote(&b, det)
+	if previewDomain == "" {
+		b.WriteString("<p style='color:#8a929c;font-size:13px'>This server has no preview domain configured " +
+			"(<code>-preview-domain</code>), so it can only serve files, never a running build.</p>")
+	}
+	previewHeaders(w, "text/html; charset=utf-8", sandbox)
+	w.Write([]byte(b.String()))
+}
+
+// writeNeedsBuildNote explains why the branch shows no site — and exactly what
+// to do about it.
+func writeNeedsBuildNote(b *strings.Builder, det *DetectedPreview) {
+	b.WriteString("<div style='border:1px solid #e3e8ee;border-radius:10px;padding:1rem 1.1rem;margin:1.25rem 0;background:#fbfcfd'>")
+	if det == nil {
+		b.WriteString("<p style='margin:0;font-weight:600'>This branch defines a Preview Environment that is not running.</p>")
+		b.WriteString("<p style='margin:.5rem 0 0;color:#5c6672;font-size:14px'>Start it from the branch's <b>Preview</b> button in GitGit. The files below are the branch's sources, not its build output.</p></div>")
+		return
+	}
+	b.WriteString("<p style='margin:0;font-weight:600'>This looks like a " + html.EscapeString(det.Name) +
+		" project — it needs a build before there is anything to preview.</p>")
+	b.WriteString("<p style='margin:.5rem 0 .75rem;color:#5c6672;font-size:14px'>Someone with write access can build it from the branch's <b>Preview</b> button in GitGit. To make that permanent, commit this as <code>.gitgit/preview.yml</code>:</p>")
+	b.WriteString("<pre style='margin:0;overflow:auto;background:#f2f6f5;border-radius:8px;padding:.75rem;font-size:12.5px;line-height:1.5'>" +
+		html.EscapeString(det.yamlText()) + "</pre></div>")
 }

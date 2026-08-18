@@ -425,9 +425,25 @@ export interface Preview {
   host?: string
   /** absolute URL of the Preview Environment */
   url?: string
-  /** repo declares a `run:` command in .gitgit/preview.yml */
+  /** the branch needs building — it cannot be served from its tree alone */
   runnable?: boolean
+  /** how GitGit guesses the branch builds, when it has no .gitgit/preview.yml */
+  detected?: DetectedPreview
   env?: PreviewEnv
+}
+
+/** A guess at how a branch builds, inferred from what is in the tree.
+ *  Building one runs repository code, so it stays a proposal until someone
+ *  with write access approves it. */
+export interface DetectedPreview {
+  name: string
+  why: string
+  /** the .gitgit/preview.yml a maintainer can commit to make it permanent */
+  yaml: string
+  build?: string[]
+  run?: string
+  static?: string
+  approved: boolean
 }
 
 // ---------- endpoints ----------

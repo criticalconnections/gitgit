@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { Check, Copy, ExternalLink, Eye, Loader2, RotateCw, ScrollText, Server, Smartphone, Square, Trash2 } from "lucide-react"
+import { Check, Copy, ExternalLink, Eye, FileCode, Hammer, Loader2, Play, RotateCw, ScrollText, Server, Smartphone, Square, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import {
@@ -11,7 +11,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { api, qrURL, type Preview, type PreviewEnv, type Repo } from "@/lib/api"
+import { api, qrURL, type DetectedPreview, type Preview, type PreviewEnv, type Repo } from "@/lib/api"
 import { shortSha } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
@@ -140,6 +140,102 @@ function EnvironmentPanel({
   )
 }
 
+// BuildProposal offers GitGit's guess at how a branch builds, for a repository
+// that has not committed a .gitgit/preview.yml. Building runs that repository's
+// own code on the server, so a guess stays inert until someone with write
+// access approves it — a committed config is that approval by construction,
+// since only a pusher can add one.
+function BuildProposal({
+  repo,
+  preview,
+  detected,
+  onStart,
+}: {
+  repo: Repo
+  preview: Preview
+  detected: DetectedPreview
+  onStart: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [showConfig, setShowConfig] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  return (
+    <div className="rounded-lg border border-tangerine/40 bg-tangerine/5 px-3 py-2.5">
+      <div className="flex items-center gap-2">
+        <Hammer className="size-3.5 text-tangerine" />
+        <span className="text-sm font-medium">Needs a build</span>
+        <span className="min-w-0 truncate text-xs text-muted-foreground">· looks like {detected.name}</span>
+      </div>
+      <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+        {repo.can_write
+          ? "There is nothing servable in this branch's tree yet — only sources. GitGit can build it and serve the result on its own domain."
+          : `Only sources here, no built site. Ask someone with write access to build it (${detected.why}).`}
+      </p>
+
+      <div className="mt-2 flex items-center gap-2">
+        {repo.can_write && (
+          <Button
+            size="sm"
+            className="h-7 px-2.5 text-xs"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true)
+              try {
+                await api.restartPreviewEnv(repo.owner, repo.name, preview.id)
+                toast.success(`Building this branch as ${detected.name}`)
+                onStart()
+              } catch (e) {
+                toast.error(e instanceof Error ? e.message : "failed")
+              } finally {
+                setBusy(false)
+              }
+            }}
+          >
+            {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+            Build this branch
+          </Button>
+        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="ml-auto h-7 px-2.5 text-xs"
+          onClick={() => setShowConfig(!showConfig)}
+        >
+          <FileCode className="size-3.5" /> {showConfig ? "Hide" : "Config"}
+        </Button>
+      </div>
+
+      {showConfig && (
+        <div className="mt-2 space-y-1.5">
+          <pre className="max-h-40 overflow-auto rounded-lg bg-zinc-900 p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-zinc-200">
+            {detected.yaml}
+          </pre>
+          <div className="flex items-center gap-1.5">
+            <p className="min-w-0 flex-1 text-[11px] leading-relaxed text-muted-foreground">
+              Commit this as <code className="font-mono">.gitgit/preview.yml</code> to pin it — and to fix it if the
+              guess is wrong.
+            </p>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 shrink-0 px-2 text-xs"
+              onClick={async () => {
+                await navigator.clipboard.writeText(detected.yaml)
+                setCopied(true)
+                setTimeout(() => setCopied(false), 1500)
+              }}
+            >
+              {copied ? <Check className="size-3.5 text-primary" /> : <Copy className="size-3.5" />}
+              Copy
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // PreviewDialog creates (or reuses) a live preview of a branch and shows its
 // shareable URL plus a QR code for testing on a phone. The preview follows
 // the branch: push again and the same link serves the new tip.
@@ -182,6 +278,8 @@ export function PreviewDialog({
 
   // A preview with its own subdomain is reachable from anywhere, so the LAN
   // address picker only applies to the path-served fallback.
+  // an unapproved guess is not an environment yet — don't call it one
+  const needsApproval = !!preview?.detected && !preview.detected.approved
   const needsHostPick = !preview?.url
   const url = preview?.url ? preview.url : preview && host ? host + preview.path : ""
   const browserURL = preview?.url ? preview.url : preview ? preview.path : ""
@@ -199,7 +297,8 @@ export function PreviewDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Eye className="size-5 text-primary" /> {preview?.runnable ? "Preview Environment" : "Branch preview"}
+            <Eye className="size-5 text-primary" />{" "}
+            {preview?.runnable && !needsApproval ? "Preview Environment" : "Branch preview"}
           </DialogTitle>
           <DialogDescription className="text-xs">
             <code className="rounded bg-muted px-1.5 py-0.5 font-mono">{refName}</code>
@@ -222,7 +321,11 @@ export function PreviewDialog({
 
         {preview && (
           <div className="space-y-3">
-            {preview.runnable && <EnvironmentPanel repo={repo} preview={preview} onChange={create} />}
+            {preview.detected && !preview.detected.approved ? (
+              <BuildProposal repo={repo} preview={preview} detected={preview.detected} onStart={create} />
+            ) : preview.runnable ? (
+              <EnvironmentPanel repo={repo} preview={preview} onChange={create} />
+            ) : null}
 
             {/* the link, with its actions inline */}
             <div className="flex items-center gap-1.5">

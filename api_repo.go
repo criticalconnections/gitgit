@@ -202,8 +202,15 @@ func previewJSON(c *apiCtx, repo *Repo, p *Preview) map[string]any {
 		m["url"] = previewOrigin(p)
 	}
 	if sha != "" {
-		if cfg := loadPreviewConfig(repo.DiskPath(), sha); cfg != nil && strings.TrimSpace(cfg.Run) != "" {
-			m["runnable"] = true
+		cfg, det := previewPlan(repo.DiskPath(), sha)
+		m["runnable"] = cfg != nil
+		if det != nil {
+			// a guess, not a commitment: the UI shows it for approval
+			m["detected"] = map[string]any{
+				"name": det.Name, "why": det.Why, "yaml": det.yamlText(),
+				"build": det.Cfg.Build, "run": det.Cfg.Run, "static": det.Cfg.Static,
+				"approved": p.EnvOK,
+			}
 		}
 	}
 	if e := envByPreview(p.ID); e != nil {
@@ -300,9 +307,21 @@ func apiPreviews(c *apiCtx, repo *Repo, rest []string) {
 			c.err(422, "branch no longer exists")
 			return
 		}
-		e := ensurePreviewEnv(repo, p, sha)
+		cfg, _ := previewPlan(repo.DiskPath(), sha)
+		if cfg == nil {
+			c.err(422, "nothing to build for this branch — add .gitgit/preview.yml to say how it builds and runs")
+			return
+		}
+		// Pressing this button IS the approval for a detected configuration:
+		// only write access reaches here. Remember it so later commits on the
+		// branch rebuild without asking again.
+		if !p.EnvOK {
+			db.Exec("UPDATE previews SET env_ok = 1 WHERE id = ?", p.ID)
+			p.EnvOK = true
+		}
+		e := startPreviewEnv(repo, p, sha, cfg)
 		if e == nil {
-			c.err(422, "this branch does not define a runnable environment (.gitgit/preview.yml)")
+			c.err(503, "no capacity for another preview environment right now")
 			return
 		}
 		c.out(201, envJSON(e))

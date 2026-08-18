@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -88,6 +89,32 @@ func (c *PreviewConfig) idle() time.Duration {
 		return time.Duration(c.IdleMinutes) * time.Minute
 	}
 	return 30 * time.Minute
+}
+
+// needsEnv reports whether this configuration requires a workspace of its own:
+// anything with a build step, a server, or a build output directory cannot be
+// served straight from the git tree.
+func (c *PreviewConfig) needsEnv() bool {
+	return strings.TrimSpace(c.Run) != "" || strings.TrimSpace(c.Static) != "" || len(c.Build) > 0
+}
+
+// previewPlan resolves how a branch previews at a commit: the committed
+// .gitgit/preview.yml when there is one, otherwise a proposal detected from
+// the tree. A nil config means the tree is servable as it stands.
+//
+// The second return value is non-nil only for a proposal, which callers must
+// treat as unapproved — see ensurePreviewEnv.
+func previewPlan(dir, sha string) (*PreviewConfig, *DetectedPreview) {
+	if cfg := loadPreviewConfig(dir, sha); cfg != nil {
+		if !cfg.needsEnv() {
+			return nil, nil
+		}
+		return cfg, nil
+	}
+	if d := detectPreview(repoTree{dir, sha}); d != nil && d.Cfg.needsEnv() {
+		return d.Cfg, d
+	}
+	return nil, nil
 }
 
 // ---------- state ----------
@@ -173,6 +200,9 @@ func envLogTail(id int64, n int) string {
 var (
 	envMu      sync.Mutex
 	envStarted = map[int64]bool{} // environments this process is building/running
+	// Build-only environments have no process to proxy to; this is the
+	// directory their build produced, resolved once when they go live.
+	envStaticDirs = map[int64]string{}
 )
 
 const maxLiveEnvs = 4
@@ -184,14 +214,26 @@ func liveEnvCount() int {
 }
 
 // ensurePreviewEnv returns the environment backing a preview, starting one if
-// the repository defines a `run` command and none is live yet. Returns nil
-// when the preview should be served statically.
+// the branch needs building and none is live yet. Returns nil when the tree
+// can be served as it stands — or when it needs a build nobody has approved.
 func ensurePreviewEnv(repo *Repo, p *Preview, sha string) *PreviewEnv {
-	cfg := loadPreviewConfig(repo.DiskPath(), sha)
-	if cfg == nil || strings.TrimSpace(cfg.Run) == "" {
-		return nil // static preview
+	cfg, detected := previewPlan(repo.DiskPath(), sha)
+	if cfg == nil {
+		return nil // nothing to build: serve the tree
 	}
+	// A detected configuration is a guess, and building it executes repository
+	// code on this host. A committed .gitgit/preview.yml is consent from
+	// somebody with push access; a guess carries no such consent, so it waits
+	// for a maintainer to approve it once (startPreviewEnv, via the API).
+	if detected != nil && !p.EnvOK {
+		return nil
+	}
+	return startPreviewEnv(repo, p, sha, cfg)
+}
 
+// startPreviewEnv creates or reuses the environment for a preview, bypassing
+// the approval check — callers must have established consent themselves.
+func startPreviewEnv(repo *Repo, p *Preview, sha string, cfg *PreviewConfig) *PreviewEnv {
 	envMu.Lock()
 	defer envMu.Unlock()
 
@@ -313,6 +355,26 @@ func buildAndRunEnv(id int64, cfg *PreviewConfig) {
 		}
 	}
 
+	// A build with no server of its own: serve what it produced. This is the
+	// common case — most front-end frameworks compile to a directory of files.
+	if strings.TrimSpace(cfg.Run) == "" {
+		root, err := envStaticRoot(id, cfg)
+		if err != nil {
+			appendEnvLog(id, "\n!!! "+err.Error()+"\n")
+			setEnvStatus(id, "failed", err.Error())
+			return
+		}
+		envMu.Lock()
+		envStaticDirs[id] = root
+		envMu.Unlock()
+		appendEnvLog(id, "\nserving "+strings.TrimPrefix(root, ws+"/")+"/ as a static site\n")
+		db.Exec("UPDATE preview_envs SET started_at = ? WHERE id = ?", now(), id)
+		setEnvStatus(id, "running", "")
+		touchEnv(id)
+		log.Printf("preview-env %d serving static build: %s@%s", id, repo.FullName(), short(e.CommitSHA))
+		return
+	}
+
 	// long-lived server
 	appendEnvLog(id, "$ "+strings.TrimSpace(cfg.Run)+"   (PORT="+fmt.Sprint(port)+")\n")
 	cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", cfg.Run)
@@ -390,6 +452,7 @@ func stopPreviewEnv(id int64, reason string) {
 	os.RemoveAll(envWorkspace(id))
 	envMu.Lock()
 	delete(envStarted, id)
+	delete(envStaticDirs, id)
 	envMu.Unlock()
 	log.Printf("preview-env %d stopped: %s", id, reason)
 }
@@ -540,4 +603,98 @@ func writeEnvStatusPage(w http.ResponseWriter, e *PreviewEnv, note string) {
 <p style="color:#5c6672;font-size:.95rem;line-height:1.5">%s</p>
 <p style="color:#8a929c;font-size:.8rem;margin-top:1.5rem">%s @ %s</p>
 </div>`, title, title, body, e.Ref, short(e.CommitSHA))
+}
+
+// ---------- serving a build that has no server ----------
+
+// envStaticRoot locates the directory a build produced inside the
+// environment's workspace.
+func envStaticRoot(id int64, cfg *PreviewConfig) (string, error) {
+	rel := strings.TrimSpace(cfg.Static)
+	if rel == "" {
+		rel = "."
+	}
+	// The build already ran repository code, so `..` here is not an
+	// escalation — but quietly rewriting it would hide a mistake in the
+	// config, so refuse it and say so.
+	for _, seg := range strings.Split(filepath.ToSlash(rel), "/") {
+		if seg == ".." {
+			return "", fmt.Errorf("static: %q must stay inside the workspace", rel)
+		}
+	}
+	ws := envWorkspace(id)
+	root := filepath.Join(ws, filepath.FromSlash(rel))
+	if st, err := os.Stat(root); err != nil || !st.IsDir() {
+		return "", fmt.Errorf("the build produced no %s/ directory", rel)
+	}
+	// Some tools nest their output one or two levels down (Angular writes
+	// dist/<project>/browser); follow a lone wrapper directory to the entry.
+	for i := 0; i < 3; i++ {
+		if fileExists(filepath.Join(root, "index.html")) {
+			break
+		}
+		entries, err := os.ReadDir(root)
+		if err != nil || len(entries) != 1 || !entries[0].IsDir() {
+			break
+		}
+		root = filepath.Join(root, entries[0].Name())
+	}
+	return root, nil
+}
+
+func fileExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
+}
+
+// serveEnvStatic serves a build-only environment's output from disk. Like
+// proxyToEnv it answers on the environment's own subdomain, so absolute asset
+// paths and client-side routers behave as they will in production.
+func serveEnvStatic(w http.ResponseWriter, r *http.Request, e *PreviewEnv) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	envMu.Lock()
+	root := envStaticDirs[e.ID]
+	envMu.Unlock()
+	if root == "" {
+		writeEnvStatusPage(w, e, "The build output is no longer on disk. Rebuild this environment.")
+		return
+	}
+	touchEnv(e.ID)
+
+	// path.Clean on a rooted path removes any `..`; the containment check is
+	// the belt to that braces. (A symlink planted by the build could still
+	// point outside, but the build ran this repository's own code already.)
+	name := filepath.Join(root, filepath.FromSlash(path.Clean("/"+r.URL.Path)))
+	if name != root && !strings.HasPrefix(name, root+string(os.PathSeparator)) {
+		http.NotFound(w, r)
+		return
+	}
+	if st, err := os.Stat(name); err == nil && st.IsDir() {
+		name = filepath.Join(name, "index.html")
+	}
+	// client-side routing: an extensionless path falls back to the entry point
+	if !fileExists(name) {
+		if path.Ext(path.Base(r.URL.Path)) != "" {
+			http.NotFound(w, r)
+			return
+		}
+		name = filepath.Join(root, "index.html")
+	}
+	f, err := os.Open(name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil || st.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-cache")
+	http.ServeContent(w, r, filepath.Base(name), st.ModTime(), f)
 }
