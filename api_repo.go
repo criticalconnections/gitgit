@@ -192,7 +192,8 @@ func previewJSON(c *apiCtx, repo *Repo, p *Preview) map[string]any {
 		"id": p.ID, "ref": p.Ref, "token": p.Token,
 		"path":       "/p/" + p.Token + "/",
 		"created_at": p.CreatedAt, "expires_at": p.ExpiresAt,
-		"hosts": previewHosts(c.r),
+		"paused": p.EnvPaused,
+		"hosts":  previewHosts(c.r),
 	}
 	sha := ""
 	if s, err := resolveCommit(repo.DiskPath(), "refs/heads/"+p.Ref); err == nil {
@@ -351,10 +352,23 @@ func apiPreviews(c *apiCtx, repo *Repo, rest []string) {
 			return
 		}
 		id, _ := strconv.ParseInt(rest[0], 10, 64)
+		p := previewByID(id)
+		if p == nil || p.RepoID != repo.ID {
+			c.err(404, "preview not found")
+			return
+		}
 		if e := envByPreview(id); e != nil {
 			stopPreviewEnv(e.ID, "stopped by "+c.u.Username)
 		}
-		c.out(200, map[string]bool{"ok": true})
+		// Stopping is deliberate, so it has to mean something: the old link is
+		// revoked, and nothing restarts until somebody presses Start.
+		db.Exec("UPDATE previews SET env_paused = 1 WHERE id = ?", p.ID)
+		if err := rotatePreviewToken(p); err != nil {
+			c.err(500, "could not rotate the preview link: "+err.Error())
+			return
+		}
+		p.EnvPaused = true
+		c.out(200, previewJSON(c, repo, p))
 	case len(rest) == 3 && rest[1] == "env" && rest[2] == "restart" && c.r.Method == http.MethodPost:
 		if c.u == nil || !canWrite(c.u, repo) {
 			c.err(403, "write access required")
@@ -386,6 +400,10 @@ func apiPreviews(c *apiCtx, repo *Repo, rest []string) {
 		if !p.EnvOK {
 			db.Exec("UPDATE previews SET env_ok = 1 WHERE id = ?", p.ID)
 			p.EnvOK = true
+		}
+		if p.EnvPaused {
+			db.Exec("UPDATE previews SET env_paused = 0 WHERE id = ?", p.ID)
+			p.EnvPaused = false
 		}
 		e := startPreviewEnv(repo, p, sha, cfg, det != nil)
 		if e == nil {

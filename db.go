@@ -205,7 +205,8 @@ CREATE TABLE IF NOT EXISTS previews (
   created_by INTEGER NOT NULL,
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
-  env_ok     INTEGER NOT NULL DEFAULT 0
+  env_ok     INTEGER NOT NULL DEFAULT 0,
+  env_paused INTEGER NOT NULL DEFAULT 0
 );
 
 -- A running instance of a branch, proxied at its own subdomain.
@@ -266,6 +267,7 @@ func openDB(path string) error {
 	// CREATE TABLE IF NOT EXISTS leaves an existing table alone, so columns
 	// added after a release have to be applied to it explicitly.
 	ensureColumn("previews", "env_ok", "INTEGER NOT NULL DEFAULT 0")
+	ensureColumn("previews", "env_paused", "INTEGER NOT NULL DEFAULT 0")
 	for _, c := range []struct{ col, ddl string }{
 		{"step", "TEXT NOT NULL DEFAULT ''"},
 		{"step_n", "INTEGER NOT NULL DEFAULT 0"},

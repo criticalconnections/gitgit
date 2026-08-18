@@ -262,6 +262,13 @@ build* — the time spent on it, and a live tail of the build output, so a slow
 install is distinguishable from a hang. The same progress appears in the
 preview dialog, which opens the log by itself while a build is running.
 
+**Stopping one.** *Stop* is deliberate, so it does two things a timeout does
+not: it **rotates the preview's token**, which kills the URL that was shared —
+every existing link and QR code stops working — and it keeps the environment
+down until somebody presses *Start*, which issues a fresh link. An environment
+that merely went idle or hit its TTL still wakes on the next visit, which is
+the point of an ephemeral environment; only a hand-pressed *Stop* sticks.
+
 **Why subdomains.** Each environment is served from its own origin, so
 absolute asset paths (`/assets/app.js`), client-side routers, cookies, and
 `localStorage` behave exactly as they will in production. Serving under a path

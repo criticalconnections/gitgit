@@ -33,6 +33,11 @@ type Preview struct {
 	// detected configuration; a committed .gitgit/preview.yml needs no such
 	// approval, since only a pusher can add one.
 	EnvOK bool
+	// EnvPaused records a deliberate Stop, as opposed to an idle or TTL
+	// timeout. A timed-out environment wakes on the next visit — that is the
+	// point of an ephemeral environment — but one somebody stopped by hand
+	// stays stopped until they start it again.
+	EnvPaused bool
 }
 
 func prunePreviews() {
@@ -61,15 +66,28 @@ func createPreview(repoID, userID int64, ref string) (*Preview, error) {
 	return p, nil
 }
 
+// rotatePreviewToken issues the preview a new capability, which revokes the
+// old URL: the token *is* the access control, so changing it is the only way
+// to take a shared link back. Every existing link, QR code and bookmark stops
+// working, which is the intent.
+func rotatePreviewToken(p *Preview) error {
+	token := randHex(16)
+	if _, err := db.Exec("UPDATE previews SET token = ? WHERE id = ?", token, p.ID); err != nil {
+		return err
+	}
+	p.Token = token
+	return nil
+}
+
 func scanPreview(row interface{ Scan(...any) error }) *Preview {
 	p := &Preview{}
-	if row.Scan(&p.ID, &p.RepoID, &p.Ref, &p.Token, &p.CreatedBy, &p.CreatedAt, &p.ExpiresAt, &p.EnvOK) != nil {
+	if row.Scan(&p.ID, &p.RepoID, &p.Ref, &p.Token, &p.CreatedBy, &p.CreatedAt, &p.ExpiresAt, &p.EnvOK, &p.EnvPaused) != nil {
 		return nil
 	}
 	return p
 }
 
-const previewCols = "id, repo_id, ref, token, created_by, created_at, expires_at, env_ok"
+const previewCols = "id, repo_id, ref, token, created_by, created_at, expires_at, env_ok, env_paused"
 
 func previewByRepoRef(repoID int64, ref string) *Preview {
 	return scanPreview(db.QueryRow("SELECT "+previewCols+" FROM previews WHERE repo_id = ? AND ref = ? AND expires_at > ?", repoID, ref, now()))
@@ -182,6 +200,10 @@ func servePreviewHost(w http.ResponseWriter, r *http.Request, token string) {
 		}
 		return
 	}
+	if p.EnvPaused {
+		writePausedPage(w, repo, p, false)
+		return
+	}
 	// Nothing is running. If the branch needs a build, say so.
 	if cfg, det := previewPlan(repo.DiskPath(), sha); cfg != nil {
 		writeNeedsBuildPage(w, repo, p, det, false)
@@ -241,6 +263,10 @@ func servePreview(w http.ResponseWriter, r *http.Request, token, reqPath string)
 	// If this branch defines a runnable environment, the path form cannot
 	// serve it safely (absolute asset paths would escape the prefix); point
 	// the visitor at the environment's own origin instead.
+	if p.EnvPaused {
+		writePausedPage(w, repo, p, true)
+		return
+	}
 	if cfg, det := previewPlan(repo.DiskPath(), sha); cfg != nil {
 		if previewDomain != "" {
 			http.Redirect(w, r, previewOrigin(p), http.StatusTemporaryRedirect)
@@ -445,4 +471,18 @@ func writeNeedsBuildNote(b *strings.Builder, det *DetectedPreview) {
 	b.WriteString("<p style='margin:.5rem 0 .75rem;color:#5c6672;font-size:14px'>Someone with write access can build it from the branch's <b>Preview</b> button in GitGit. To make that permanent, commit this as <code>.gitgit/preview.yml</code>:</p>")
 	b.WriteString("<pre style='margin:0;overflow:auto;background:#f2f6f5;border-radius:8px;padding:.75rem;font-size:12.5px;line-height:1.5'>" +
 		html.EscapeString(det.yamlText()) + "</pre></div>")
+}
+
+// writePausedPage answers a preview somebody stopped on purpose. Rebuilding on
+// sight would make the Stop button meaningless — and would let any visitor
+// with the link start work on this host.
+func writePausedPage(w http.ResponseWriter, repo *Repo, p *Preview, sandbox bool) {
+	var b strings.Builder
+	previewPageHead(&b, repo, p)
+	b.WriteString("<div style='border:1px solid #e3e8ee;border-radius:10px;padding:1rem 1.1rem;margin:1.25rem 0;background:#fbfcfd'>")
+	b.WriteString("<p style='margin:0;font-weight:600'>This preview environment was stopped.</p>")
+	b.WriteString("<p style='margin:.5rem 0 0;color:#5c6672;font-size:14px'>Someone with write access stopped it deliberately, so it will not restart on its own. Start it again from the branch's <b>Preview</b> button in GitGit.</p></div>")
+	previewHeaders(w, "text/html; charset=utf-8", sandbox)
+	w.WriteHeader(http.StatusServiceUnavailable)
+	w.Write([]byte(b.String()))
 }

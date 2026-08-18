@@ -89,7 +89,8 @@ function EnvironmentPanel({
           {status === "running" && "· on its own domain, isolated from GitGit"}
           {(status === "building" || status === "queued") && "· the link works as soon as it's up"}
           {status === "failed" && `· ${env?.message || "the build or the app exited"}`}
-          {status === "stopped" && `· ${env?.message || "not currently running"}`}
+          {status === "stopped" &&
+            (preview.paused ? "· link revoked — Start issues a new one" : `· ${env?.message || "not currently running"}`)}
           {status === "none" && "· starts on first visit"}
         </span>
       </div>
@@ -153,7 +154,11 @@ function EnvironmentPanel({
                   setBusy(true)
                   try {
                     await api.stopPreviewEnv(repo.owner, repo.name, preview.id)
+                    toast.success("Stopped — the old link no longer works")
                     await refresh()
+                    onChange() // the token was rotated; pick up the new URL and QR
+                  } catch (e) {
+                    toast.error(e instanceof Error ? e.message : "failed")
                   } finally {
                     setBusy(false)
                   }

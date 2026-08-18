@@ -439,6 +439,8 @@ export interface Preview {
   url?: string
   /** the branch needs building — it cannot be served from its tree alone */
   runnable?: boolean
+  /** stopped by hand: the link was rotated and nothing restarts on a visit */
+  paused?: boolean
   /** how GitGit guesses the branch builds, when it has no .gitgit/preview.yml */
   detected?: DetectedPreview
   env?: PreviewEnv
@@ -613,8 +615,10 @@ export const api = {
     del<{ ok: boolean }>(`/api/v1/repos/${enc(o)}/${enc(r)}/previews/${id}`),
   previewEnv: (o: string, r: string, id: number) =>
     get<PreviewEnv>(`/api/v1/repos/${enc(o)}/${enc(r)}/previews/${id}/env`),
+  /** Stops the environment AND rotates the preview link, so the URL that was
+   *  shared stops working. Returns the preview with its new token. */
   stopPreviewEnv: (o: string, r: string, id: number) =>
-    del<{ ok: boolean }>(`/api/v1/repos/${enc(o)}/${enc(r)}/previews/${id}/env`),
+    del<Preview>(`/api/v1/repos/${enc(o)}/${enc(r)}/previews/${id}/env`),
   restartPreviewEnv: (o: string, r: string, id: number) =>
     post<PreviewEnv>(`/api/v1/repos/${enc(o)}/${enc(r)}/previews/${id}/env/restart`),
 

@@ -255,6 +255,9 @@ func liveEnvCount() int {
 // the branch needs building and none is live yet. Returns nil when the tree
 // can be served as it stands — or when it needs a build nobody has approved.
 func ensurePreviewEnv(repo *Repo, p *Preview, sha string) *PreviewEnv {
+	if p.EnvPaused {
+		return nil // stopped by hand; only an explicit start brings it back
+	}
 	cfg, detected := previewPlan(repo.DiskPath(), sha)
 	if cfg == nil {
 		return nil // nothing to build: serve the tree
