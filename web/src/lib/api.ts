@@ -419,6 +419,32 @@ export interface Notification {
   url: string
 }
 
+export interface CodeMatch {
+  repo: string
+  ref: string
+  path: string
+  line: number
+  text: string
+}
+
+export interface SearchHit {
+  type: "issue" | "pull"
+  repo: string
+  number: number
+  title: string
+  state: string
+  created_at: number
+  url: string
+}
+
+export interface SearchResults {
+  query: string
+  repos?: Repo[]
+  issues?: SearchHit[]
+  code?: CodeMatch[]
+  users?: User[]
+}
+
 export interface ImportJob {
   id: number
   source: string
@@ -515,6 +541,12 @@ export const api = {
   // users + repos
   userProfile: (username: string) => get<UserProfile>(`/api/v1/users/${enc(username)}`),
   listRepos: (q?: string) => get<Repo[]>(`/api/v1/repos${q ? `?q=${enc(q)}` : ""}`),
+
+  // search
+  search: (q: string, type?: string, repo?: string) =>
+    get<SearchResults>(
+      `/api/v1/search?q=${enc(q)}${type ? `&type=${enc(type)}` : ""}${repo ? `&repo=${enc(repo)}` : ""}`,
+    ),
 
   // notifications
   notifications: (all?: boolean) =>

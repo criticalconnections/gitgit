@@ -1,5 +1,5 @@
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom"
-import { Bell, Building2, CloudDownload, Compass, LogOut, Moon, Plus, Settings, Sun, User as UserIcon } from "lucide-react"
+import { Bell, Building2, CloudDownload, Compass, LogOut, Moon, Plus, Search as SearchIcon, Settings, Sun, User as UserIcon } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import {
@@ -85,7 +85,25 @@ export function AppShell() {
               </Link>
             </Button>
           </nav>
-          <div className="ml-auto flex items-center gap-2">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              const q = new FormData(e.currentTarget).get("q")?.toString().trim()
+              if (q) navigate(`/search?q=${encodeURIComponent(q)}`)
+            }}
+            className="ml-auto hidden md:block"
+          >
+            <div className="relative">
+              <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <input
+                name="q"
+                placeholder="Search…"
+                aria-label="Search"
+                className="h-8 w-52 rounded-md border bg-background pr-2 pl-8 text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              />
+            </div>
+          </form>
+          <div className="flex items-center gap-2 md:ml-2">
             <Button variant="ghost" size="icon" className="size-8 text-muted-foreground" onClick={toggle}>
               {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
             </Button>
