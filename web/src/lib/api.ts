@@ -410,6 +410,18 @@ export interface PreviewEnv {
   last_used_at: number
   expires_at: number
   log?: string
+  /** what the build is doing right now, while status is building */
+  step?: string
+  step_n?: number
+  step_total?: number
+  step_at?: number
+}
+
+/** A secret injected into Preview Environments. The value is deliberately
+ *  absent — the API never returns one. */
+export interface RepoSecret {
+  name: string
+  updated_at: number
 }
 
 export interface Preview {
@@ -605,6 +617,18 @@ export const api = {
     del<{ ok: boolean }>(`/api/v1/repos/${enc(o)}/${enc(r)}/previews/${id}/env`),
   restartPreviewEnv: (o: string, r: string, id: number) =>
     post<PreviewEnv>(`/api/v1/repos/${enc(o)}/${enc(r)}/previews/${id}/env/restart`),
+
+  // secrets — set and delete only; there is no endpoint that reads a value back
+  listSecrets: (o: string, r: string) => get<RepoSecret[]>(`/api/v1/repos/${enc(o)}/${enc(r)}/secrets`),
+  setSecret: (o: string, r: string, name: string, value: string) =>
+    post<{ imported: number; names: string[] }>(`/api/v1/repos/${enc(o)}/${enc(r)}/secrets`, { name, value }),
+  importDotenv: (o: string, r: string, dotenv: string) =>
+    post<{ imported: number; names: string[]; ignored?: string[] }>(
+      `/api/v1/repos/${enc(o)}/${enc(r)}/secrets`,
+      { dotenv },
+    ),
+  deleteSecret: (o: string, r: string, name: string) =>
+    del<{ ok: boolean }>(`/api/v1/repos/${enc(o)}/${enc(r)}/secrets/${enc(name)}`),
 
   // CI
   listRuns: (o: string, r: string) => get<CIRun[]>(`/api/v1/repos/${enc(o)}/${enc(r)}/ci/runs`),

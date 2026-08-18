@@ -223,8 +223,24 @@ CREATE TABLE IF NOT EXISTS preview_envs (
   created_at   INTEGER NOT NULL,
   started_at   INTEGER NOT NULL DEFAULT 0,
   last_used_at INTEGER NOT NULL DEFAULT 0,
-  expires_at   INTEGER NOT NULL
+  expires_at   INTEGER NOT NULL,
+  step         TEXT NOT NULL DEFAULT '',
+  step_n       INTEGER NOT NULL DEFAULT 0,
+  step_total   INTEGER NOT NULL DEFAULT 0,
+  step_at      INTEGER NOT NULL DEFAULT 0
 );
+-- Values injected into Preview Environments, encrypted with a key held
+-- outside this database (see secrets.go).
+CREATE TABLE IF NOT EXISTS repo_secrets (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo_id    INTEGER NOT NULL,
+  name       TEXT NOT NULL,
+  sealed     TEXT NOT NULL,
+  updated_by INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  UNIQUE (repo_id, name)
+);
+
 CREATE INDEX IF NOT EXISTS idx_envs_preview ON preview_envs(preview_id);
 CREATE INDEX IF NOT EXISTS idx_envs_status ON preview_envs(status);
 
@@ -250,6 +266,14 @@ func openDB(path string) error {
 	// CREATE TABLE IF NOT EXISTS leaves an existing table alone, so columns
 	// added after a release have to be applied to it explicitly.
 	ensureColumn("previews", "env_ok", "INTEGER NOT NULL DEFAULT 0")
+	for _, c := range []struct{ col, ddl string }{
+		{"step", "TEXT NOT NULL DEFAULT ''"},
+		{"step_n", "INTEGER NOT NULL DEFAULT 0"},
+		{"step_total", "INTEGER NOT NULL DEFAULT 0"},
+		{"step_at", "INTEGER NOT NULL DEFAULT 0"},
+	} {
+		ensureColumn("preview_envs", c.col, c.ddl)
+	}
 	return nil
 }
 

@@ -36,7 +36,7 @@ function EnvironmentPanel({
   onChange: () => void
 }) {
   const [env, setEnv] = useState<PreviewEnv | null>(preview.env ?? null)
-  const [showLog, setShowLog] = useState(false)
+  const [showLog, setShowLog] = useState<boolean | null>(null)
   const [busy, setBusy] = useState(false)
 
   const refresh = useCallback(async () => {
@@ -47,13 +47,27 @@ function EnvironmentPanel({
     }
   }, [repo.owner, repo.name, preview.id])
 
+  const busyBuilding = env?.status === "building" || env?.status === "queued"
+
   // poll while the environment is coming up
   useEffect(() => {
-    if (env && (env.status === "building" || env.status === "queued")) {
-      const t = setInterval(refresh, 2000)
+    if (busyBuilding) {
+      const t = setInterval(refresh, 1500)
       return () => clearInterval(t)
     }
-  }, [env, refresh])
+  }, [busyBuilding, refresh])
+
+  // a second timer purely so the elapsed counter ticks between polls
+  const [, tick] = useState(0)
+  useEffect(() => {
+    if (!busyBuilding) return
+    const t = setInterval(() => tick((n) => n + 1), 1000)
+    return () => clearInterval(t)
+  }, [busyBuilding])
+
+  // While it builds, the log is the point — open it without being asked, but
+  // never fight a deliberate toggle.
+  const logOpen = showLog ?? busyBuilding
 
   useEffect(() => {
     refresh()
@@ -80,6 +94,30 @@ function EnvironmentPanel({
         </span>
       </div>
 
+      {busyBuilding && env?.step && (
+        <div className="mt-2.5 space-y-1.5">
+          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full bg-primary transition-[width] duration-500"
+              style={{ width: `${Math.round(((env.step_n ?? 0) / Math.max(1, env.step_total ?? 1)) * 100)}%` }}
+            />
+          </div>
+          <div className="flex items-baseline gap-2 text-xs">
+            <span className="shrink-0 font-medium tabular-nums">
+              Step {env.step_n} of {env.step_total}
+            </span>
+            <code className="min-w-0 flex-1 truncate font-mono text-muted-foreground" title={env.step}>
+              {env.step}
+            </code>
+            {env.step_at ? (
+              <span className="shrink-0 tabular-nums text-muted-foreground">
+                {Math.max(0, Math.floor(Date.now() / 1000 - env.step_at))}s
+              </span>
+            ) : null}
+          </div>
+        </div>
+      )}
+
       <div className="mt-2 flex items-center gap-2">
         {repo.can_write && (
           <>
@@ -102,8 +140,8 @@ function EnvironmentPanel({
                 }
               }}
             >
-              <RotateCw className="size-3.5" />
-              {status === "running" ? "Rebuild" : "Start"}
+              <RotateCw className={cn("size-3.5", busyBuilding && "animate-spin")} />
+              {status === "running" ? "Rebuild" : busyBuilding ? "Restart" : "Start"}
             </Button>
             {(status === "running" || status === "building") && (
               <Button
@@ -126,12 +164,12 @@ function EnvironmentPanel({
             )}
           </>
         )}
-        <Button variant="ghost" size="sm" className="ml-auto h-7 px-2.5 text-xs" onClick={() => setShowLog(!showLog)}>
-          <ScrollText className="size-3.5" /> {showLog ? "Hide" : "Logs"}
+        <Button variant="ghost" size="sm" className="ml-auto h-7 px-2.5 text-xs" onClick={() => setShowLog(!logOpen)}>
+          <ScrollText className="size-3.5" /> {logOpen ? "Hide" : "Logs"}
         </Button>
       </div>
 
-      {showLog && (
+      {logOpen && (
         <pre className="mt-2 max-h-56 overflow-auto rounded-lg bg-zinc-900 p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-zinc-200">
           {env?.log?.trim() || "no output yet"}
         </pre>

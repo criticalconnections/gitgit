@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
-import { Plus, ShieldCheck, Tag, Trash2, Webhook as WebhookIcon, X } from "lucide-react"
+import { KeyRound, Plus, ShieldCheck, Tag, Trash2, Webhook as WebhookIcon, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -32,11 +32,13 @@ import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
 import { EmptyState, ErrorNote, LabelPill, PageLoading, UserAvatar, UserLink } from "@/components/shared"
 import { useRepo } from "@/components/repo-layout"
+import { timeAgo } from "@/lib/format"
 import {
   api,
   type Collaborator,
   type Label as RepoLabel,
   type Repo,
+  type RepoSecret,
   type Webhook,
 } from "@/lib/api"
 
@@ -670,6 +672,160 @@ function DangerCard({ repo }: { repo: Repo }) {
   )
 }
 
+// ---------- secrets ----------
+
+// SecretsCard manages the values injected into Preview Environments. Values
+// are write-only by design: this component can create and delete them, and has
+// no way to read one back, because the API has no endpoint that returns one.
+function SecretsCard({ repo }: { repo: Repo }) {
+  const [secrets, setSecrets] = useState<RepoSecret[] | null>(null)
+  const [dotenv, setDotenv] = useState("")
+  const [name, setName] = useState("")
+  const [value, setValue] = useState("")
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      setSecrets(await api.listSecrets(repo.owner, repo.name))
+    } catch {
+      setSecrets([])
+    }
+  }, [repo.owner, repo.name])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  async function importEnv() {
+    setBusy(true)
+    try {
+      const res = await api.importDotenv(repo.owner, repo.name, dotenv)
+      setDotenv("")
+      toast.success(`Stored ${res.imported} secret${res.imported === 1 ? "" : "s"}`)
+      if (res.ignored?.length) toast.warning(`Ignored ${res.ignored.join(", ")}`)
+      await load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "failed")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function addOne() {
+    setBusy(true)
+    try {
+      await api.setSecret(repo.owner, repo.name, name.trim(), value)
+      setName("")
+      setValue("")
+      toast.success("Secret stored")
+      await load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "failed")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Card className="lg:col-span-2">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <KeyRound className="size-4 text-tangerine" /> Preview secrets
+        </CardTitle>
+        <CardDescription>
+          Environment variables given to Preview Environments of {repo.full_name}, encrypted at rest and kept out of
+          git. Values are never shown again after you save them.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <div className="rounded-lg border border-tangerine/40 bg-tangerine/5 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
+          <b className="text-foreground">A preview runs the branch's own code.</b> Anyone who can push can read these
+          from inside a build, so use credentials scoped to a preview database — never production keys.
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="dotenv">Paste a .env file</Label>
+          <textarea
+            id="dotenv"
+            value={dotenv}
+            onChange={(e) => setDotenv(e.target.value)}
+            spellCheck={false}
+            rows={5}
+            placeholder={"DATABASE_URL=postgres://…\nSUPABASE_ANON_KEY=eyJhbGciOi…"}
+            className="w-full resize-y rounded-md border bg-background px-3 py-2 font-mono text-xs shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          />
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-muted-foreground">
+              Comments, <code className="font-mono">export</code> and quoted values are understood.
+            </p>
+            <Button size="sm" disabled={busy || !dotenv.trim()} onClick={importEnv}>
+              <Plus className="size-4" /> Store secrets
+            </Button>
+          </div>
+        </div>
+
+        <Separator />
+
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="min-w-0 flex-1 space-y-2">
+            <Label htmlFor="secret-name">Name</Label>
+            <Input
+              id="secret-name"
+              value={name}
+              onChange={(e) => setName(e.target.value.toUpperCase())}
+              placeholder="STRIPE_KEY"
+              className="font-mono"
+            />
+          </div>
+          <div className="min-w-0 flex-1 space-y-2">
+            <Label htmlFor="secret-value">Value</Label>
+            <Input
+              id="secret-value"
+              type="password"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              autoComplete="new-password"
+              placeholder="•••••••••"
+              className="font-mono"
+            />
+          </div>
+          <Button variant="outline" disabled={busy || !name.trim()} onClick={addOne}>
+            Add
+          </Button>
+        </div>
+
+        {secrets === null ? null : secrets.length === 0 ? (
+          <EmptyState icon={<KeyRound />} title="No secrets yet" className="py-8">
+            Previews of this repository build with no extra environment.
+          </EmptyState>
+        ) : (
+          <div className="divide-y rounded-lg border">
+            {secrets.map((s) => (
+              <div key={s.name} className="flex items-center gap-3 px-3 py-2">
+                <KeyRound className="size-3.5 shrink-0 text-muted-foreground" />
+                <code className="min-w-0 flex-1 truncate font-mono text-sm">{s.name}</code>
+                <span className="shrink-0 text-xs text-muted-foreground">{timeAgo(s.updated_at)}</span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8 shrink-0 text-destructive hover:text-destructive"
+                  title={`Delete ${s.name}`}
+                  onClick={async () => {
+                    await api.deleteSecret(repo.owner, repo.name, s.name)
+                    await load()
+                  }}
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 // ---------- page ----------
 
 export default function RepoSettings() {
@@ -685,6 +841,7 @@ export default function RepoSettings() {
       <MergeCard repo={repo} refresh={refresh} />
       <CollaboratorsCard repo={repo} />
       <LabelsCard repo={repo} />
+      <SecretsCard repo={repo} />
       <WebhooksCard repo={repo} />
       <DangerCard repo={repo} />
     </div>

