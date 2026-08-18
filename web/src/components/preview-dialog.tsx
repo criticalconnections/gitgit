@@ -226,7 +226,10 @@ export function PreviewDialog({
 
             {/* the link, with its actions inline */}
             <div className="flex items-center gap-1.5">
-              <code className="min-w-0 flex-1 truncate rounded-md border bg-muted/50 px-2.5 py-1.5 font-mono text-xs">
+              <code
+                title={url || browserURL}
+                className="min-w-0 flex-1 truncate rounded-md border bg-muted/50 px-2.5 py-1.5 font-mono text-xs"
+              >
                 {displayURL}
               </code>
               <Button
