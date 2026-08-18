@@ -79,60 +79,101 @@ func (j *ImportJob) finish(status, message string, repoID int64) {
 
 // ---------- source parsing ----------
 
-type GitHubSource struct {
-	Owner string
+// ImportSource is a repository somewhere else. Git data comes over plain
+// HTTPS and works for any host; only issue and label import needs to know
+// whose API it is talking to.
+type ImportSource struct {
+	Owner string // for GitLab this is the full group path, which may nest
 	Name  string
-	Host  string // github.com, or a GitHub Enterprise host
+	Host  string // github.com, gitlab.com, or a self-hosted instance
+	Kind  string // "github" | "gitlab"
 }
 
-func (s GitHubSource) CloneURL() string {
+func (s ImportSource) CloneURL() string {
 	return fmt.Sprintf("https://%s/%s/%s.git", s.Host, s.Owner, s.Name)
 }
 
-func (s GitHubSource) APIBase() string {
+// FullPath is owner/name, with GitLab's nested groups preserved.
+func (s ImportSource) FullPath() string { return s.Owner + "/" + s.Name }
+
+func (s ImportSource) isGitLab() bool { return s.Kind == "gitlab" }
+
+func (s ImportSource) APIBase() string {
+	if s.isGitLab() {
+		return "https://" + s.Host + "/api/v4"
+	}
 	if s.Host == "github.com" {
 		return "https://api.github.com"
 	}
 	return "https://" + s.Host + "/api/v3"
 }
 
+// kindForHost guesses the API flavour from the hostname. A self-hosted
+// instance on an unrelated domain can be named explicitly instead.
+func kindForHost(host string) string {
+	h := strings.ToLower(host)
+	if h == "gitlab.com" || strings.HasPrefix(h, "gitlab.") || strings.Contains(h, ".gitlab.") {
+		return "gitlab"
+	}
+	return "github"
+}
+
 var ghShorthand = regexp.MustCompile(`^([\w.-]+)/([\w.-]+)$`)
 
-// parseGitHubSource accepts "owner/repo", a browser URL, or a clone URL.
-func parseGitHubSource(input string) (GitHubSource, error) {
+// parseImportSource accepts "owner/repo", a browser URL, or a clone URL.
+func parseImportSource(input string) (ImportSource, error) {
 	in := strings.TrimSpace(input)
 	in = strings.TrimSuffix(in, "/")
 	if in == "" {
-		return GitHubSource{}, fmt.Errorf("a repository is required")
+		return ImportSource{}, fmt.Errorf("a repository is required")
 	}
 	if m := ghShorthand.FindStringSubmatch(in); m != nil {
-		return GitHubSource{Owner: m[1], Name: strings.TrimSuffix(m[2], ".git"), Host: "github.com"}, nil
+		return ImportSource{Owner: m[1], Name: strings.TrimSuffix(m[2], ".git"), Host: "github.com", Kind: "github"}, nil
 	}
 	// git@host:owner/repo.git
 	if strings.HasPrefix(in, "git@") {
 		rest := strings.TrimPrefix(in, "git@")
 		host, path, ok := strings.Cut(rest, ":")
 		if !ok {
-			return GitHubSource{}, fmt.Errorf("could not parse %q", input)
+			return ImportSource{}, fmt.Errorf("could not parse %q", input)
 		}
 		parts := strings.Split(strings.TrimSuffix(path, ".git"), "/")
-		if len(parts) != 2 {
-			return GitHubSource{}, fmt.Errorf("expected owner/repo in %q", input)
+		if len(parts) < 2 {
+			return ImportSource{}, fmt.Errorf("expected owner/repo in %q", input)
 		}
-		return GitHubSource{Owner: parts[0], Name: parts[1], Host: host}, nil
+		return ImportSource{
+			Owner: strings.Join(parts[:len(parts)-1], "/"),
+			Name:  parts[len(parts)-1],
+			Host:  host, Kind: kindForHost(host),
+		}, nil
 	}
 	if !strings.Contains(in, "://") {
 		in = "https://" + in
 	}
 	u, err := url.Parse(in)
 	if err != nil {
-		return GitHubSource{}, fmt.Errorf("could not parse %q", input)
+		return ImportSource{}, fmt.Errorf("could not parse %q", input)
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
-		return GitHubSource{}, fmt.Errorf("expected a URL like https://github.com/owner/repo")
+		return ImportSource{}, fmt.Errorf("expected a URL like https://github.com/owner/repo")
 	}
-	return GitHubSource{Owner: parts[0], Name: strings.TrimSuffix(parts[1], ".git"), Host: u.Host}, nil
+	// GitLab groups nest, so everything before the last segment is the owner.
+	// GitLab also puts a "/-/" marker before sub-pages; drop it and anything after.
+	for i, p := range parts {
+		if p == "-" {
+			parts = parts[:i]
+			break
+		}
+	}
+	if len(parts) < 2 {
+		return ImportSource{}, fmt.Errorf("expected a URL like https://gitlab.com/group/project")
+	}
+	return ImportSource{
+		Owner: strings.Join(parts[:len(parts)-1], "/"),
+		Name:  strings.TrimSuffix(parts[len(parts)-1], ".git"),
+		Host:  u.Host, Kind: kindForHost(u.Host),
+	}, nil
 }
 
 // ---------- import ----------
@@ -148,7 +189,7 @@ type ImportRequest struct {
 // startImport validates the request, creates the repository, and mirrors it
 // in the background.
 func startImport(u *User, req ImportRequest) (*ImportJob, error) {
-	src, err := parseGitHubSource(req.Source)
+	src, err := parseImportSource(req.Source)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +214,7 @@ func startImport(u *User, req ImportRequest) (*ImportJob, error) {
 	return job, nil
 }
 
-func runImport(job *ImportJob, u *User, repo *Repo, src GitHubSource, req ImportRequest) {
+func runImport(job *ImportJob, u *User, repo *Repo, src ImportSource, req ImportRequest) {
 	defer func() {
 		if v := recover(); v != nil {
 			log.Printf("import panic: %v", v)
@@ -234,7 +275,11 @@ func runImport(job *ImportJob, u *User, repo *Repo, src GitHubSource, req Import
 	}
 
 	if req.ImportIssues {
-		n, err := importIssues(job, u, repo, src, req.Token)
+		importFn := importIssues
+		if src.isGitLab() {
+			importFn = importGitLabIssues
+		}
+		n, err := importFn(job, u, repo, src, req.Token)
 		if err != nil {
 			// The git data is already safely in place, so a failure here
 			// degrades rather than fails the whole import.
@@ -283,15 +328,26 @@ type ghIssue struct {
 	Comments int `json:"comments"`
 }
 
-func ghGet(token, url string, v any) error {
+func ghGet(token, url string, v any) error { return apiGet("github", token, url, v) }
+
+func apiGet(kind, token, url string, v any) error {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "gitgit-importer")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	if kind == "gitlab" {
+		req.Header.Set("Accept", "application/json")
+		if token != "" {
+			// GitLab accepts PRIVATE-TOKEN for personal access tokens; Bearer
+			// is only for OAuth tokens, and using the wrong one 401s.
+			req.Header.Set("PRIVATE-TOKEN", token)
+		}
+	} else {
+		req.Header.Set("Accept", "application/vnd.github+json")
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
 	}
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
@@ -304,14 +360,18 @@ func ghGet(token, url string, v any) error {
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 400))
-		return fmt.Errorf("GitHub API %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		name := "GitHub"
+		if kind == "gitlab" {
+			name = "GitLab"
+		}
+		return fmt.Errorf("%s API %s: %s", name, resp.Status, strings.TrimSpace(string(body)))
 	}
 	return json.NewDecoder(resp.Body).Decode(v)
 }
 
 // importIssues copies issues (and, as issues, pull requests) into the repo.
 // Authorship is preserved in the body text rather than by inventing accounts.
-func importIssues(job *ImportJob, u *User, repo *Repo, src GitHubSource, token string) (int, error) {
+func importIssues(job *ImportJob, u *User, repo *Repo, src ImportSource, token string) (int, error) {
 	job.log("Importing issues…")
 	imported := 0
 	labelIDs := map[string]int64{}
@@ -368,6 +428,108 @@ func importIssues(job *ImportJob, u *User, repo *Repo, src GitHubSource, token s
 			}
 			imported++
 		}
+		if len(batch) < 100 {
+			break
+		}
+	}
+	return imported, nil
+}
+
+// ---------- GitLab ----------
+
+// glIssue is the subset of GitLab's issue payload GitGit uses. Note `iid`:
+// GitLab's `id` is global across the instance, and the number people actually
+// refer to is the project-scoped one.
+type glIssue struct {
+	IID         int      `json:"iid"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	State       string   `json:"state"` // opened | closed
+	Labels      []string `json:"labels"`
+	WebURL      string   `json:"web_url"`
+	CreatedAt   string   `json:"created_at"`
+	Author      struct {
+		Username string `json:"username"`
+	} `json:"author"`
+}
+
+type glLabel struct {
+	Name  string `json:"name"`
+	Color string `json:"color"`
+}
+
+// importGitLabIssues copies issues and labels through the GitLab v4 API.
+// Merge requests are not imported: their source branches may not exist here,
+// and a merge request that cannot be merged or reviewed is worse than an
+// honest record — the same call made for GitHub pull requests.
+func importGitLabIssues(job *ImportJob, u *User, repo *Repo, src ImportSource, token string) (int, error) {
+	job.log("Importing issues from GitLab…")
+	project := url.PathEscape(src.FullPath()) // group/subgroup/project -> percent-encoded
+	imported := 0
+	labelIDs := map[string]int64{}
+
+	// Labels first, so issues can be attached to real colours rather than
+	// inventing grey ones.
+	var labels []glLabel
+	if err := apiGet("gitlab", token, fmt.Sprintf("%s/projects/%s/labels?per_page=100", src.APIBase(), project), &labels); err == nil {
+		for _, l := range labels {
+			color := "#" + strings.TrimPrefix(l.Color, "#")
+			if len(color) != 7 {
+				color = "#1f6feb"
+			}
+			createLabel(repo.ID, l.Name, color)
+		}
+		for _, l := range listLabels(repo.ID) {
+			labelIDs[l.Name] = l.ID
+		}
+		job.log("Imported %d label(s)", len(labels))
+	}
+
+	for page := 1; page <= 10; page++ { // same 1000-issue cap as the GitHub path
+		var batch []glIssue
+		endpoint := fmt.Sprintf("%s/projects/%s/issues?scope=all&per_page=100&page=%d&order_by=created_at&sort=asc",
+			src.APIBase(), project, page)
+		if err := apiGet("gitlab", token, endpoint, &batch); err != nil {
+			return imported, err
+		}
+		if len(batch) == 0 {
+			break
+		}
+		for _, gi := range batch {
+			body := fmt.Sprintf("_Imported from [%s!%d](%s)", src.FullPath(), gi.IID, gi.WebURL)
+			if gi.Author.Username != "" {
+				body = fmt.Sprintf("_Imported from [%s#%d](%s), originally opened by @%s",
+					src.FullPath(), gi.IID, gi.WebURL, gi.Author.Username)
+			}
+			body += "._\n\n" + gi.Description
+
+			is, err := createIssue(repo.ID, u.ID, gi.Title, body)
+			if err != nil {
+				continue
+			}
+			if gi.State == "closed" {
+				is.State = "closed"
+				is.ClosedAt = nullNow()
+				saveIssue(is)
+			}
+			for _, name := range gi.Labels {
+				id := labelIDs[name]
+				if id == 0 {
+					// a label used by an issue but absent from the project list
+					createLabel(repo.ID, name, "#8a929c")
+					for _, l := range listLabels(repo.ID) {
+						if l.Name == name {
+							id, labelIDs[name] = l.ID, l.ID
+						}
+					}
+				}
+				if id != 0 {
+					setItemLabel("issue", is.ID, id, true)
+				}
+			}
+			imported++
+		}
+		job.log("Imported %d issue(s)…", imported)
 		if len(batch) < 100 {
 			break
 		}

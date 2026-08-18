@@ -45,7 +45,7 @@ for state, bare repositories on disk. No external services.
   Astro, SvelteKit, Nuxt, Remix, Create React App, Hugo, Jekyll, Go and more
   from the tree, and proposes the build — a maintainer approves it with one
   click. See [Preview Environments](#preview-environments) below.
-- **Import** — mirror a repository from GitHub with every branch, tag, and
+- **Import** — mirror a repository from GitHub or GitLab with every branch, tag, and
   optionally its issues and labels (private repos via a token; GitHub
   Enterprise and other git hosts work too), or upload a `.zip` from your
   machine.
@@ -178,10 +178,17 @@ with `CI`, `GITGIT_SHA`, `GITGIT_REF`, `GITGIT_EVENT`, `GITGIT_REPO`, and
 `GITGIT_RUN_NUMBER` set. CI executes repository code on the host — only host
 repositories you trust, or run the server in a container.
 
-## Importing from GitHub
+## Importing from GitHub or GitLab
 
 **Import** in the top bar (or `/import`) brings a repository over. Paste
-`owner/repo` or any URL — GitHub Enterprise and other git hosts work too.
+`owner/repo` or any URL. Git data is mirrored over plain HTTPS and works for
+**any** git host; issue and label import understands GitHub and GitLab,
+including self-hosted instances of both.
+
+GitLab's nested groups are handled — `gitlab.com/group/subgroup/project`
+imports as `project` — as are browser URLs carrying GitLab's `/-/` marker.
+The flavour is guessed from the hostname (`gitlab.*` and `*.gitlab.*` are
+GitLab, everything else GitHub/Enterprise).
 
 Git data is mirrored with `git clone --mirror`, so **every branch and tag**
 comes across in one pass, and the source's default branch is adopted. The
@@ -194,9 +201,14 @@ issues*: their head branches may not exist here, and a pull request that
 cannot be merged or reviewed is worse than an honest record. Every imported
 item keeps a header crediting the original author and linking back.
 
-Private repositories need a GitHub token with `repo` scope, which is also
-worth supplying for issue imports — unauthenticated API calls are limited to
-60 per hour. The token is used for that one import and never stored.
+Private repositories need a token: GitHub wants one with `repo` scope, GitLab
+a personal access token with `read_api`. Supply one for issue imports either
+way — unauthenticated GitHub calls are limited to 60 an hour. The token is
+used for that one import and never stored.
+
+Verified against real hosts: `octocat/Hello-World` and `git/git-scm.com` from
+GitHub, and `gitlab-org/gitlab-development-kit` from GitLab (830 branches, 19
+tags, 1000 issues with their labels and attribution).
 
 Imports run in the background with a live log, since a large mirror takes
 minutes.
