@@ -421,6 +421,9 @@ func handleAPIRepoRoot(c *apiCtx, repo *Repo) {
 	case http.MethodGet:
 		m := repoJSON(repo, c.u)
 		m["clone_url"] = serverBase(c.r) + "/" + repo.FullName() + ".git"
+		if u := sshCloneURL(c.r, repo); u != "" {
+			m["ssh_clone_url"] = u
+		}
 		branches := []map[string]any{}
 		for _, b := range listBranches(repo.DiskPath()) {
 			branches = append(branches, map[string]any{"name": b.Name, "sha": b.SHA})

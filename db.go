@@ -244,6 +244,19 @@ CREATE TABLE IF NOT EXISTS preview_envs (
 -- outside this database (see secrets.go).
 -- One row per (person, thread): repeat activity refreshes it rather than
 -- stacking up, so an inbox stays readable.
+-- Public keys, in authorized_keys form. The fingerprint is unique across all
+-- users: one key must map to exactly one account, or "who pushed this" has no
+-- answer.
+CREATE TABLE IF NOT EXISTS ssh_keys (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id      INTEGER NOT NULL,
+  title        TEXT NOT NULL DEFAULT '',
+  fingerprint  TEXT NOT NULL UNIQUE,
+  public_key   TEXT NOT NULL,
+  created_at   INTEGER NOT NULL,
+  last_used_at INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS notifications (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id    INTEGER NOT NULL,

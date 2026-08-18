@@ -20,6 +20,8 @@ var (
 	openReg         bool
 	previewDomain   string // wildcard base for Preview Environments, e.g. "preview.example.com"
 	previewInsecure bool   // build preview URLs with http:// (local development)
+	sshAddr         string // listen address for git over SSH ("" disables it)
+	sshHostName     string // hostname shown in SSH clone URLs
 	startTme        = time.Now()
 )
 
@@ -41,6 +43,10 @@ func main() {
 		"wildcard base domain for Preview Environments, e.g. preview.example.com (requires *.<domain> DNS and TLS)")
 	flag.BoolVar(&previewInsecure, "preview-insecure", envOr("GITGIT_PREVIEW_INSECURE", "") == "true",
 		"build preview URLs with http:// instead of https:// (local development)")
+	flag.StringVar(&sshAddr, "ssh-addr", envOr("GITGIT_SSH_ADDR", ":2222"),
+		"listen address for git over SSH; empty to disable")
+	flag.StringVar(&sshHostName, "ssh-host", envOr("GITGIT_SSH_HOST", ""),
+		"hostname shown in SSH clone URLs (default: the request's host)")
 	flag.BoolVar(&devMode, "dev", false, "dev mode: serve templates/static from disk instead of the embedded copies")
 	flag.Parse()
 
@@ -59,6 +65,7 @@ func main() {
 		log.Fatalf("open database: %v", err)
 	}
 	startCIWorkers(ciSlots)
+	maybeStartSSH(sshAddr)
 	resetPreviewEnvsOnBoot()
 	go reapPreviewEnvs()
 	requeueInterruptedRuns()

@@ -229,6 +229,39 @@ func handleAPIUser(c *apiCtx, rest []string) {
 			return
 		}
 		c.out(200, map[string]bool{"ok": true})
+	case len(rest) == 1 && rest[0] == "keys" && c.r.Method == http.MethodGet:
+		out := []map[string]any{}
+		for _, k := range listSSHKeys(c.u.ID) {
+			row := map[string]any{
+				"id": k.ID, "title": k.Title, "fingerprint": k.Fingerprint,
+				"created_at": k.CreatedAt,
+			}
+			if k.LastUsedAt > 0 {
+				row["last_used_at"] = k.LastUsedAt
+			}
+			out = append(out, row)
+		}
+		c.out(200, out)
+
+	case len(rest) == 1 && rest[0] == "keys" && c.r.Method == http.MethodPost:
+		var req struct{ Title, Key string }
+		if !c.decode(&req) {
+			return
+		}
+		k, err := addSSHKey(c.u.ID, req.Title, req.Key)
+		if err != nil {
+			c.err(422, err.Error())
+			return
+		}
+		c.out(201, map[string]any{
+			"id": k.ID, "title": k.Title, "fingerprint": k.Fingerprint, "created_at": k.CreatedAt,
+		})
+
+	case len(rest) == 2 && rest[0] == "keys" && c.r.Method == http.MethodDelete:
+		id, _ := strconv.ParseInt(rest[1], 10, 64)
+		deleteSSHKey(c.u.ID, id)
+		c.out(200, map[string]bool{"ok": true})
+
 	case len(rest) == 1 && rest[0] == "tokens" && c.r.Method == http.MethodGet:
 		out := []map[string]any{}
 		for _, t := range listAccessTokens(c.u.ID) {

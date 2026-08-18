@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
-import { Copy, KeyRound, Plus } from "lucide-react"
+import { Copy, KeyRound, Plus, Trash2 } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
@@ -22,7 +22,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { EmptyState, PageLoading } from "@/components/shared"
-import { api, type AccessToken, type User } from "@/lib/api"
+import { api, type AccessToken, type SSHKey, type User } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
 import { timeAgo } from "@/lib/format"
 
@@ -311,6 +311,119 @@ function TokensCard() {
   )
 }
 
+// SSHKeysCard manages the public keys that authenticate git over SSH. The
+// key itself is the identity — the SSH username is always "git" and carries
+// no authority — so a key registered here is exactly as powerful as the
+// account it belongs to.
+function SSHKeysCard() {
+  const [keys, setKeys] = useState<SSHKey[] | null>(null)
+  const [title, setTitle] = useState("")
+  const [key, setKey] = useState("")
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      setKeys(await api.listSSHKeys())
+    } catch {
+      setKeys([])
+    }
+  }, [])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <KeyRound className="size-4 text-primary" /> SSH keys
+        </CardTitle>
+        <CardDescription>
+          Push and pull over SSH without typing a password. Paste the contents of your public key —
+          the <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">.pub</code> file,
+          never the private one.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="key-title">Label</Label>
+          <Input
+            id="key-title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Work laptop"
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="key-body">Public key</Label>
+          <textarea
+            id="key-body"
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            rows={3}
+            spellCheck={false}
+            placeholder="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5… you@laptop"
+            className="w-full resize-y rounded-md border bg-background px-3 py-2 font-mono text-xs shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          />
+        </div>
+        <Button
+          disabled={busy || !key.trim()}
+          onClick={async () => {
+            setBusy(true)
+            try {
+              await api.addSSHKey(title.trim(), key.trim())
+              setTitle("")
+              setKey("")
+              toast.success("SSH key added")
+              await load()
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : "failed")
+            } finally {
+              setBusy(false)
+            }
+          }}
+        >
+          <Plus className="size-4" /> Add key
+        </Button>
+
+        {keys === null ? null : keys.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No SSH keys yet.</p>
+        ) : (
+          <div className="divide-y rounded-lg border">
+            {keys.map((k) => (
+              <div key={k.id} className="flex items-center gap-3 px-3 py-2">
+                <KeyRound className="size-3.5 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium">{k.title}</div>
+                  <div className="truncate font-mono text-[11px] text-muted-foreground">
+                    {k.fingerprint}
+                  </div>
+                </div>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {k.last_used_at ? `used ${timeAgo(k.last_used_at)}` : "never used"}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8 shrink-0 text-destructive hover:text-destructive"
+                  title={`Delete ${k.title}`}
+                  onClick={async () => {
+                    await api.deleteSSHKey(k.id)
+                    await load()
+                  }}
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function UserSettings() {
   const { user, loading, refresh } = useAuth()
   const navigate = useNavigate()
@@ -326,11 +439,12 @@ export default function UserSettings() {
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Manage your account, security and access tokens.
+          Manage your account, security, SSH keys and access tokens.
         </p>
       </header>
       <ProfileCard user={user} onSaved={refresh} />
       <PasswordCard />
+      <SSHKeysCard />
       <TokensCard />
     </div>
   )

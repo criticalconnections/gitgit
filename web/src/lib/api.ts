@@ -86,6 +86,8 @@ export interface Repo {
   require_approvals: number
   // present on GET /repos/{o}/{r} only:
   clone_url?: string
+  /** git@host:owner/repo.git, when the SSH server is enabled */
+  ssh_clone_url?: string
   branches?: BranchRef[]
 }
 
@@ -445,6 +447,14 @@ export interface SearchResults {
   users?: User[]
 }
 
+export interface SSHKey {
+  id: number
+  title: string
+  fingerprint: string
+  created_at: number
+  last_used_at?: number
+}
+
 export interface ImportJob {
   id: number
   source: string
@@ -534,6 +544,11 @@ export const api = {
     patch<User>("/api/v1/user", { email, fullName }),
   changePassword: (current: string, password: string) =>
     post<{ ok: boolean }>("/api/v1/user/password", { current, password }),
+  // SSH keys
+  listSSHKeys: () => get<SSHKey[]>("/api/v1/user/keys"),
+  addSSHKey: (title: string, key: string) => post<SSHKey>("/api/v1/user/keys", { title, key }),
+  deleteSSHKey: (id: number) => del<{ ok: boolean }>(`/api/v1/user/keys/${id}`),
+
   listTokens: () => get<AccessToken[]>("/api/v1/user/tokens"),
   createToken: (name: string) => post<{ token: string; name: string }>("/api/v1/user/tokens", { name }),
   deleteToken: (id: number) => del<{ ok: boolean }>(`/api/v1/user/tokens/${id}`),

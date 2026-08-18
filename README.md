@@ -10,9 +10,18 @@ for state, bare repositories on disk. No external services.
 
 ## Features
 
-- **Git over smart HTTP** — `git clone` / `git push` with stock git.
-  Authenticate with your password or a personal access token. Zip / tar.gz
-  archive downloads at `/{owner}/{repo}/archive/{ref}.zip`.
+- **Git over HTTPS and SSH** — `git clone` / `git push` with stock git. Over
+  HTTP, authenticate with your password or a personal access token; over SSH,
+  add a public key under Settings and use
+  `git@host:owner/repo.git`. Zip / tar.gz archive downloads at
+  `/{owner}/{repo}/archive/{ref}.zip`.
+- **Organizations** — repositories owned by a team rather than a person.
+  Owners administer every repository the organization holds; members read
+  them and can be named collaborators on individual ones.
+- **Notifications** — an inbox for mentions, replies on your threads,
+  reviews, and CI failures on your pull requests, with the reason for each.
+- **Search** — across repositories, issues, pull requests, people and code
+  (`git grep` over the default branch), restricted to what you can see.
 - **Pull requests** — three-dot diffs, per-line review comments, approvals /
   request-changes, shared issue/PR numbering, base retargeting.
 - **Merge strategies** — merge commit, squash, or rebase, all performed
@@ -123,6 +132,31 @@ avoid breaking `git clone`.
 | `-open-registration` | `GITGIT_OPEN_REGISTRATION` | `true` | allow anyone to sign up; set `false` when internet-facing (the first account can still bootstrap the admin) |
 | — | `GITGIT_SECRET_KEY` | generated | 32-byte hex/base64 key for preview secrets; defaults to `$GITGIT_DATA/secret.key` (0600) |
 | `-ci-workers` | — | `2` | concurrent CI runners |
+| `-ssh-addr` | `GITGIT_SSH_ADDR` | `:2222` | git-over-SSH listener; empty to disable |
+| `-ssh-host` | `GITGIT_SSH_HOST` | derived | hostname shown in SSH clone URLs |
+
+## Git over SSH
+
+GitGit speaks SSH itself — there is no system `sshd` involved and no unix
+account per user. Add a public key under **Settings → SSH keys**, then:
+
+```bash
+git clone ssh://git@git.example.com:2222/you/project.git
+```
+
+The SSH username is always `git` and carries no authority: the key is the
+identity. A key may belong to exactly one account, so `who pushed this` always
+has an answer.
+
+The server accepts precisely two commands — `git-upload-pack` and
+`git-receive-pack` — and refuses everything else, including shell and pty
+requests. Permissions come from the same `canRead`/`canWrite` the HTTP path
+uses, so access cannot drift between the two protocols, and a repository you
+cannot read is reported exactly like one that does not exist.
+
+The host key is generated on first run into `$GITGIT_DATA/ssh_host_ed25519_key`
+(mode 0600). Keep it: clients pin it, and replacing it makes every client warn
+about a changed host key.
 
 ## CI configuration
 

@@ -235,6 +235,24 @@ function TreeView({ tree, refName, path }: { tree: TreeResponse; refName: string
                 />
                 <CopyButton text={repo.clone_url ?? ""} />
               </div>
+              {repo.ssh_clone_url && (
+                <>
+                  <p className="mt-3 mb-2 text-xs font-semibold text-muted-foreground">Clone with SSH</p>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      readOnly
+                      value={repo.ssh_clone_url}
+                      onClick={(e) => e.currentTarget.select()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                      className="h-8 font-mono text-xs"
+                    />
+                    <CopyButton text={repo.ssh_clone_url} />
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-muted-foreground">
+                    Add a key under Settings &rarr; SSH keys first.
+                  </p>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
