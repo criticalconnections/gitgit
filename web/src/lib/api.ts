@@ -447,6 +447,12 @@ export interface SearchResults {
   users?: User[]
 }
 
+export interface BackupFile {
+  name: string
+  size: number
+  created_at: number
+}
+
 export interface Deployment {
   id: number
   number: number
@@ -566,6 +572,12 @@ export const api = {
     patch<User>("/api/v1/user", { email, fullName }),
   changePassword: (current: string, password: string) =>
     post<{ ok: boolean }>("/api/v1/user/password", { current, password }),
+  // backups (site admin only)
+  listBackups: () => get<{ backups: BackupFile[]; directory: string }>("/api/v1/backups"),
+  createBackup: () => post<{ name: string }>("/api/v1/backups"),
+  deleteBackup: (name: string) => del<{ ok: boolean }>(`/api/v1/backups/${enc(name)}`),
+  backupDownloadURL: (name: string) => `/api/v1/backups/${enc(name)}/download`,
+
   // deployments
   deployments: (o: string, r: string) =>
     get<{ environments: DeployEnvironment[]; deployments: Deployment[] }>(

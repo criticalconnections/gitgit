@@ -22,6 +22,8 @@ var (
 	previewInsecure bool   // build preview URLs with http:// (local development)
 	sshAddr         string // listen address for git over SSH ("" disables it)
 	sshHostName     string // hostname shown in SSH clone URLs
+	backupEvery     time.Duration
+	backupKeep      int
 	startTme        = time.Now()
 )
 
@@ -47,6 +49,9 @@ func main() {
 		"listen address for git over SSH; empty to disable")
 	flag.StringVar(&sshHostName, "ssh-host", envOr("GITGIT_SSH_HOST", ""),
 		"hostname shown in SSH clone URLs (default: the request's host)")
+	flag.DurationVar(&backupEvery, "backup-every", 0,
+		"take a backup on this interval, e.g. 24h (0 disables scheduled backups)")
+	flag.IntVar(&backupKeep, "backup-keep", backupKeepDefault, "number of scheduled backups to retain")
 	flag.BoolVar(&devMode, "dev", false, "dev mode: serve templates/static from disk instead of the embedded copies")
 	flag.Parse()
 
@@ -66,6 +71,7 @@ func main() {
 	}
 	startCIWorkers(ciSlots)
 	maybeStartSSH(sshAddr)
+	scheduleBackups(backupEvery, backupKeep)
 	resetPreviewEnvsOnBoot()
 	go reapPreviewEnvs()
 	requeueInterruptedRuns()

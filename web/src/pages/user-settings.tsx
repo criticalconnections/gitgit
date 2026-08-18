@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
-import { Copy, KeyRound, Plus, Trash2 } from "lucide-react"
+import { Archive, Copy, KeyRound, Loader2, Plus, Trash2 } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
@@ -22,7 +22,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { EmptyState, PageLoading } from "@/components/shared"
-import { api, type AccessToken, type SSHKey, type User } from "@/lib/api"
+import { api, type AccessToken, type BackupFile, type SSHKey, type User } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
 import { timeAgo } from "@/lib/format"
 
@@ -424,6 +424,104 @@ function SSHKeysCard() {
   )
 }
 
+// BackupsCard is site-admin only, because an archive holds every private
+// repository and every user row on the instance.
+function BackupsCard() {
+  const [backups, setBackups] = useState<BackupFile[] | null>(null)
+  const [dir, setDir] = useState("")
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      const res = await api.listBackups()
+      setBackups(res.backups)
+      setDir(res.directory)
+    } catch {
+      setBackups([])
+    }
+  }, [])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Archive className="size-4 text-primary" /> Backups
+        </CardTitle>
+        <CardDescription>
+          A consistent snapshot of the database plus every repository, written to{" "}
+          <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">{dir || "…"}</code>.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="rounded-lg border border-tangerine/40 bg-tangerine/5 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
+          <b className="text-foreground">The secret key is not in the archive.</b> Bundling it with
+          the data it decrypts would protect nothing. Copy{" "}
+          <code className="font-mono">secret.key</code> somewhere separate, or your restored
+          instance will list secret names it cannot read.
+        </div>
+
+        <Button
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true)
+            try {
+              const r = await api.createBackup()
+              toast.success(`Wrote ${r.name}`)
+              await load()
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : "failed")
+            } finally {
+              setBusy(false)
+            }
+          }}
+        >
+          {busy ? <Loader2 className="size-4 animate-spin" /> : <Archive className="size-4" />}
+          Back up now
+        </Button>
+
+        {backups === null ? null : backups.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No backups yet.</p>
+        ) : (
+          <div className="divide-y rounded-lg border">
+            {backups.map((b) => (
+              <div key={b.name} className="flex items-center gap-3 px-3 py-2">
+                <Archive className="size-3.5 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-mono text-xs">{b.name}</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {(b.size / 1048576).toFixed(1)} MB · {timeAgo(b.created_at)}
+                  </div>
+                </div>
+                <Button asChild variant="ghost" size="sm" className="h-8 shrink-0 px-2 text-xs">
+                  <a href={api.backupDownloadURL(b.name)} download>
+                    Download
+                  </a>
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8 shrink-0 text-destructive hover:text-destructive"
+                  title={`Delete ${b.name}`}
+                  onClick={async () => {
+                    await api.deleteBackup(b.name)
+                    await load()
+                  }}
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function UserSettings() {
   const { user, loading, refresh } = useAuth()
   const navigate = useNavigate()
@@ -446,6 +544,7 @@ export default function UserSettings() {
       <PasswordCard />
       <SSHKeysCard />
       <TokensCard />
+      {user.is_admin && <BackupsCard />}
     </div>
   )
 }

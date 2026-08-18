@@ -395,6 +395,40 @@ Because environments are siblings of the forge's own domain:
 Environments run repository code, exactly like CI. Run GitGit in a container
 or a dedicated VM if you do not fully trust everyone who can push.
 
+## Backups
+
+**Settings → Backups** (site admins) writes one `.tar.gz` holding a database
+snapshot and every bare repository. Or schedule it:
+
+```bash
+./gitgit -backup-every 24h -backup-keep 7
+```
+
+The database is snapshotted with SQLite's `VACUUM INTO`, not copied. Copying a
+live database in WAL mode can capture a torn page or miss committed data still
+in the `-wal`, giving you an archive that restores into a corrupt database —
+and you would not find out until the day you needed it.
+
+**Restoring** is extracting the archive over an empty data directory:
+
+```bash
+mkdir -p /srv/gitgit-data && tar xzf gitgit-20260818-034812.tar.gz -C /srv/gitgit-data
+./gitgit -data /srv/gitgit-data
+```
+
+**The secret key is deliberately not in the archive.** An archive containing
+both the encrypted secrets and the key that opens them protects nothing. Copy
+`$GITGIT_DATA/secret.key` somewhere separate — a password manager, a different
+host — or set `GITGIT_SECRET_KEY` from your own store. A restore without it
+comes up healthy but lists secret names it cannot decrypt, and the affected
+builds say so in their logs.
+
+Repositories are copied live. A push landing *during* a backup can be captured
+mid-update; git's own atomicity means the worst case is a ref pointing at an
+object that arrived after the pack was read, which `git fsck` reports and a
+re-push fixes. Stopping the world to avoid that would make backups something
+people turn off.
+
 ## Stacked PR workflow
 
 ```bash

@@ -100,6 +100,8 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		handleAPINotifications(c, parts[1:])
 	case parts[0] == "search" && len(parts) == 1:
 		handleAPISearch(c)
+	case parts[0] == "backups":
+		handleAPIBackups(c, parts[1:])
 	case parts[0] == "repos" && len(parts) == 1:
 		handleAPIRepoIndex(c)
 	case parts[0] == "import":
