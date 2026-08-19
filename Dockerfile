@@ -7,13 +7,19 @@ COPY web/ .
 RUN npm run build
 
 # --- backend: single Go binary with the SPA embedded ---
-FROM golang:1.26-alpine AS build
+# --platform=$BUILDPLATFORM plus GOARCH cross-compilation: the Go toolchain
+# runs natively on the runner and emits the target architecture, instead of
+# emulating the whole compile under QEMU.
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
+ARG TARGETOS TARGETARCH
+ARG VERSION=dev
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=frontend /src/web/dist ./web/dist
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /gitgit .
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /gitgit .
 
 FROM alpine:3.20
 RUN apk add --no-cache git bash ca-certificates
